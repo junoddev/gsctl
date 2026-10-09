@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use gsap::commands::{self, WriteOpts};
 use gsap::error::{Error, Result};
 use gsap::index::Index;
+use gsap::keys::{self, AddOpts};
 use gsap::state::{self, ApplyOpts, ExportOpts};
 use serde_json::Value;
 
@@ -129,6 +130,9 @@ enum Command {
     },
     /// List the export areas and the schemas each covers.
     Areas,
+    /// Keyboard shortcuts across all keybinding schemas and custom bindings.
+    #[command(subcommand)]
+    Keys(KeysCommand),
     /// List recorded changes (set, reset, revert, apply), newest first.
     History {
         /// Maximum number of entries.
@@ -164,6 +168,34 @@ enum Command {
     },
 }
 
+#[derive(Subcommand)]
+enum KeysCommand {
+    /// What is bound to ACCEL? e.g. '<Super>t'. Aliases and modifier order
+    /// don't matter (<Ctrl> = <Primary> = <Control>).
+    Find { accel: String },
+    /// Every binding that has an accelerator.
+    List {
+        /// Only custom keybindings.
+        #[arg(long)]
+        custom: bool,
+    },
+    /// Accelerators bound to more than one action.
+    Conflicts,
+    /// Add a custom keybinding that runs COMMAND. Refuses an accelerator
+    /// that's already bound unless --force.
+    Add {
+        name: String,
+        accel: String,
+        command: String,
+        /// Add even if ACCEL is already bound.
+        #[arg(long)]
+        force: bool,
+        /// Show the writes without making them.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
 fn run(cli: &Cli) -> Result<Value> {
     let index = Index::load()?;
     match &cli.command {
@@ -190,6 +222,15 @@ fn run(cli: &Cli) -> Result<Value> {
             state::apply(&index, &opts)
         }
         Command::Areas => Ok(state::areas()),
+        Command::Keys(k) => match k {
+            KeysCommand::Find { accel } => keys::find(&index, accel),
+            KeysCommand::List { custom } => keys::list(&index, *custom),
+            KeysCommand::Conflicts => keys::conflicts(&index),
+            KeysCommand::Add { name, accel, command, force, dry_run } => {
+                let opts = AddOpts { name, accel, command, force: *force, dry_run: *dry_run };
+                keys::add(&index, &opts)
+            }
+        },
         Command::History { limit, schema, key } => commands::history(*limit, schema, key.as_deref()),
         Command::Revert { id, force, dry_run, yes } => commands::revert(&index, id, *force, *dry_run, *yes),
     }
@@ -206,6 +247,9 @@ fn command_name(c: &Command) -> &'static str {
         Command::Export { .. } => "export",
         Command::Apply { .. } => "apply",
         Command::Areas => "areas",
+        Command::Keys(KeysCommand::Find { .. }) | Command::Keys(KeysCommand::List { .. }) => "keys-list",
+        Command::Keys(KeysCommand::Conflicts) => "keys-conflicts",
+        Command::Keys(KeysCommand::Add { .. }) => "keys-add",
         Command::History { .. } => "history",
         Command::Revert { .. } => "revert",
     }

@@ -140,6 +140,32 @@
     </key>
   </schema>
 
+  <!-- Stand-ins for keybinding schemas, for `gsap keys`. -->
+  <schema id="org.gnome.desktop.wm.keybindings" path="/org/gnome/desktop/wm/keybindings/">
+    <key name="switch-applications" type="as">
+      <default>['&lt;Super&gt;Tab', '&lt;Alt&gt;Tab']</default>
+      <summary>Switch applications</summary>
+    </key>
+    <key name="close" type="as">
+      <default>['&lt;Alt&gt;F4']</default>
+      <summary>Close window</summary>
+    </key>
+    <key name="minimize" type="as">
+      <default>['&lt;Super&gt;h']</default>
+      <summary>Hide window</summary>
+    </key>
+    <key name="show-desktop" type="as">
+      <default>[]</default>
+      <summary>Hide all normal windows</summary>
+    </key>
+  </schema>
+  <schema id="org.gnome.shell.keybindings" path="/org/gnome/shell/keybindings/">
+    <key name="toggle-overview" type="as">
+      <default>['&lt;Super&gt;s']</default>
+      <summary>Show the overview</summary>
+    </key>
+  </schema>
+
   <!-- Stand-ins for the media-keys schemas, for custom keybinding export/apply. -->
   <schema id="org.gnome.settings-daemon.plugins.media-keys" path="/org/gnome/settings-daemon/plugins/media-keys/">
     <key name="custom-keybindings" type="as">

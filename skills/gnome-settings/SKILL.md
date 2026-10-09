@@ -132,6 +132,24 @@ Some keys can lock the user out or break input: remote desktop
 `--dry-run` reports `"requires_yes": true`. Get the user's explicit OK first,
 especially over a remote session.
 
+## Keyboard shortcuts
+
+Shortcuts live in several schemas (wm, shell, mutter, media-keys) plus
+custom bindings in a relocatable schema. Use `gsap keys` rather than editing
+those keys by hand:
+
+    gsap keys find '<Super>t'          # what's on it? "free": true if nothing
+    gsap keys conflicts                 # accelerators bound twice
+    gsap keys list [--custom]
+    gsap keys add Terminal '<Super>Return' ptyxis --dry-run
+    gsap keys add Terminal '<Super>Return' ptyxis
+
+`keys add` picks the next free `customN` slot and refuses an accelerator
+that's taken (exit 7). Free it first, or use `--force` only if the user
+wants both. `gsap revert last` removes the binding again. To change a
+built-in shortcut, `gsap set org.gnome.desktop.wm.keybindings <key>
+'["<Super>x"]'` (these keys are string arrays; `[]` disables).
+
 ## Other commands
 
 - `gsap changed [--schema org.gnome.desktop]`: keys that differ from their

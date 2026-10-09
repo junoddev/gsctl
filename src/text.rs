@@ -114,9 +114,44 @@ pub fn render(command: &str, out: &Value) -> String {
                 line(format!("{:<12} {}", s(&a["name"]), s(&a["description"])));
             }
         }
+        "keys-list" => {
+            for b in out["bindings"].as_array().into_iter().flatten() {
+                line(binding_text(b));
+            }
+            if out["free"] == true {
+                line(format!("{} is free", s(&out["accel"])));
+            }
+        }
+        "keys-conflicts" => {
+            for c in out["conflicts"].as_array().into_iter().flatten() {
+                line(format!("{}:", s(&c["accel"])));
+                for b in c["bindings"].as_array().into_iter().flatten() {
+                    line(format!("  {}", binding_text(b)));
+                }
+            }
+        }
+        "keys-add" => {
+            let what = if out["dry_run"] == true { "would add" } else { "added" };
+            line(format!(
+                "{what} {} at {}: {} runs {}",
+                s(&out["name"]),
+                s(&out["path"]),
+                s(&out["accel"]),
+                s(&out["command"])
+            ));
+        }
         _ => line(serde_json::to_string_pretty(out).unwrap()),
     }
     text
+}
+
+fn binding_text(b: &Value) -> String {
+    let accels: Vec<&str> = b["accels"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    let what = match b.get("custom") {
+        Some(c) => format!("custom {:?}: {}", s(&c["name"]), s(&c["command"])),
+        None => format!("{} {}  # {}", s(&b["schema"]), s(&b["key"]), s(&b["summary"])),
+    };
+    format!("{:<28} {what}", accels.join(" "))
 }
 
 fn key_text(k: &Value) -> String {
