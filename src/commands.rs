@@ -20,7 +20,9 @@ fn range_json(key: &SettingsSchemaKey) -> Value {
     match kind.as_str() {
         "enum" => json!({ "kind": "enum", "choices": to_json(&detail) }),
         "flags" => json!({ "kind": "flags", "flags": to_json(&detail) }),
-        "range" => json!({ "kind": "range", "min": to_json(&detail.child_value(0)), "max": to_json(&detail.child_value(1)) }),
+        "range" => {
+            json!({ "kind": "range", "min": to_json(&detail.child_value(0)), "max": to_json(&detail.child_value(1)) })
+        }
         _ => Value::Null,
     }
 }
@@ -68,11 +70,8 @@ pub fn schema(index: &Index, schema: Option<&str>, key: Option<&str>, path: Opti
         let key = entry.key(k)?;
         return Ok(key_json(entry, &key, settings.as_ref()));
     }
-    let keys: Vec<Value> = entry
-        .keys()
-        .iter()
-        .map(|k| key_json(entry, &entry.schema.key(k), settings.as_ref()))
-        .collect();
+    let keys: Vec<Value> =
+        entry.keys().iter().map(|k| key_json(entry, &entry.schema.key(k), settings.as_ref())).collect();
     let mut out = entry.summary_json();
     let o = out.as_object_mut().unwrap();
     o.insert("instance_path".into(), path.into());
@@ -155,7 +154,9 @@ fn range_error(key: &SettingsSchemaKey, value: &glib::Variant) -> Option<String>
 
 fn list(v: &Value) -> String {
     v.as_array()
-        .map(|a| a.iter().map(|x| x.as_str().map_or_else(|| x.to_string(), str::to_string)).collect::<Vec<_>>().join(", "))
+        .map(|a| {
+            a.iter().map(|x| x.as_str().map_or_else(|| x.to_string(), str::to_string)).collect::<Vec<_>>().join(", ")
+        })
         .unwrap_or_default()
 }
 
@@ -227,9 +228,7 @@ fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, new: glib::Varian
 
     match op {
         "reset" => settings.reset(key),
-        _ => settings
-            .set_value(key, &new)
-            .map_err(|e| Error::Internal(format!("GSettings refused the write: {e}")))?,
+        _ => settings.set_value(key, &new).map_err(|e| Error::Internal(format!("GSettings refused the write: {e}")))?,
     }
     gio::Settings::sync();
 
@@ -281,7 +280,5 @@ pub fn changed(index: &Index, prefixes: &[String]) -> Result<Value> {
 /// matches `org.gnome.desktop.interface`).
 fn matches_prefix(id: &str, prefixes: &[String]) -> bool {
     prefixes.is_empty()
-        || prefixes
-            .iter()
-            .any(|p| id == p || id.strip_prefix(p.as_str()).is_some_and(|rest| rest.starts_with('.')))
+        || prefixes.iter().any(|p| id == p || id.strip_prefix(p.as_str()).is_some_and(|rest| rest.starts_with('.')))
 }

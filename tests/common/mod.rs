@@ -178,11 +178,8 @@ fn compile_schemas(src: &Path, target: &Path) {
             fs::copy(&p, target.join(p.file_name().unwrap())).unwrap();
         }
     }
-    let status = Command::new("glib-compile-schemas")
-        .arg("--strict")
-        .arg(target)
-        .status()
-        .expect("glib-compile-schemas");
+    let status =
+        Command::new("glib-compile-schemas").arg("--strict").arg(target).status().expect("glib-compile-schemas");
     assert!(status.success(), "glib-compile-schemas failed for {}", src.display());
 }
 

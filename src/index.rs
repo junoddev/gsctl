@@ -69,7 +69,10 @@ impl Entry {
                 Some(p)
             }
             (false, Some(_)) => {
-                return Err(Error::Usage(format!("{} has a fixed path; --path is only for relocatable schemas", self.id())));
+                return Err(Error::Usage(format!(
+                    "{} has a fixed path; --path is only for relocatable schemas",
+                    self.id()
+                )));
             }
             (false, None) => None,
         };
@@ -135,10 +138,7 @@ impl Index {
     }
 
     pub fn get(&self, id: &str) -> Result<&Entry> {
-        self.entries
-            .iter()
-            .find(|e| e.schema.id() == id)
-            .ok_or_else(|| Error::SchemaNotFound(id.to_string()))
+        self.entries.iter().find(|e| e.schema.id() == id).ok_or_else(|| Error::SchemaNotFound(id.to_string()))
     }
 }
 

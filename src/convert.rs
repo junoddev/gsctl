@@ -55,11 +55,7 @@ pub fn to_json(v: &Variant) -> Value {
 pub fn from_json(j: &Value, ty: &VariantTy) -> Result<Variant, String> {
     let mismatch = || format!("expected {}, got {}", describe(ty), json_kind(j));
     let int = |min: i128, max: i128| -> Result<i128, String> {
-        let n = j
-            .as_i64()
-            .map(i128::from)
-            .or_else(|| j.as_u64().map(i128::from))
-            .ok_or_else(mismatch)?;
+        let n = j.as_i64().map(i128::from).or_else(|| j.as_u64().map(i128::from)).ok_or_else(mismatch)?;
         if n < min || n > max {
             return Err(format!("{n} is out of range for {} ({min}..={max})", describe(ty)));
         }
@@ -99,11 +95,8 @@ pub fn from_json(j: &Value, ty: &VariantTy) -> Result<Variant, String> {
         _ if ty.is_array() => array(j, ty)?,
         _ if ty.is_tuple() || ty.is_dict_entry() => {
             let items = j.as_array().ok_or_else(mismatch)?;
-            let types: Vec<&VariantTy> = if ty.is_dict_entry() {
-                vec![ty.key(), ty.value()]
-            } else {
-                ty.tuple_types().collect()
-            };
+            let types: Vec<&VariantTy> =
+                if ty.is_dict_entry() { vec![ty.key(), ty.value()] } else { ty.tuple_types().collect() };
             if items.len() != types.len() {
                 return Err(format!("expected {} with {} items, got {}", describe(ty), types.len(), items.len()));
             }
@@ -124,9 +117,7 @@ pub fn from_json(j: &Value, ty: &VariantTy) -> Result<Variant, String> {
 }
 
 fn array(j: &Value, ty: &VariantTy) -> Result<Variant, String> {
-    let items = j
-        .as_array()
-        .ok_or_else(|| format!("expected {}, got {}", describe(ty), json_kind(j)))?;
+    let items = j.as_array().ok_or_else(|| format!("expected {}, got {}", describe(ty), json_kind(j)))?;
     let elem = ty.element();
     let children = items
         .iter()
@@ -192,7 +183,8 @@ fn infer(j: &Value) -> Result<Variant, String> {
         Value::String(s) => s.as_str().into(),
         Value::Array(items) if items.iter().all(Value::is_string) => from_json(j, VariantTy::STRING_ARRAY)?,
         Value::Array(items) => {
-            let children = items.iter().map(|i| infer(i).map(|v| Variant::from_variant(&v))).collect::<Result<Vec<_>, _>>()?;
+            let children =
+                items.iter().map(|i| infer(i).map(|v| Variant::from_variant(&v))).collect::<Result<Vec<_>, _>>()?;
             Variant::array_from_iter_with_type(VariantTy::VARIANT, children)
         }
         Value::Object(_) => from_json(j, VariantTy::VARDICT)?,

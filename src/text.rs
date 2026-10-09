@@ -23,7 +23,13 @@ pub fn render(command: &str, out: &Value) -> String {
     match command {
         "search" => {
             for r in out["results"].as_array().into_iter().flatten() {
-                line(format!("{} {} = {}  # {}", s(&r["schema"]), s(&r["key"]), compact(&r["value"]), s(&r["summary"])));
+                line(format!(
+                    "{} {} = {}  # {}",
+                    s(&r["schema"]),
+                    s(&r["key"]),
+                    compact(&r["value"]),
+                    s(&r["summary"])
+                ));
             }
             let shown = out["results"].as_array().map_or(0, Vec::len);
             line(format!("({shown} of {} matches)", out["total"]));
@@ -60,7 +66,13 @@ pub fn render(command: &str, out: &Value) -> String {
         }
         "changed" => {
             for c in out["changed"].as_array().into_iter().flatten() {
-                line(format!("{} {} = {}  (default {})", s(&c["schema"]), s(&c["key"]), compact(&c["value"]), compact(&c["default"])));
+                line(format!(
+                    "{} {} = {}  (default {})",
+                    s(&c["schema"]),
+                    s(&c["key"]),
+                    compact(&c["value"]),
+                    compact(&c["default"])
+                ));
             }
         }
         _ => line(serde_json::to_string_pretty(out).unwrap()),

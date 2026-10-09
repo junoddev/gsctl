@@ -53,8 +53,12 @@ impl Error {
             "message": self.to_string(),
         });
         let extra = match self {
-            Error::SchemaNotFound(schema) => json!({ "schema": schema, "hint": "try `gsap search <words>` or `gsap schema` to list schemas" }),
-            Error::KeyNotFound { schema, key } => json!({ "schema": schema, "key": key, "hint": format!("try `gsap schema {schema}` to list its keys") }),
+            Error::SchemaNotFound(schema) => {
+                json!({ "schema": schema, "hint": "try `gsap search <words>` or `gsap schema` to list schemas" })
+            }
+            Error::KeyNotFound { schema, key } => {
+                json!({ "schema": schema, "key": key, "hint": format!("try `gsap schema {schema}` to list its keys") })
+            }
             Error::InvalidValue { details, .. } => details.clone(),
             Error::NotWritable { schema, key } => json!({ "schema": schema, "key": key }),
             Error::Guarded { schema, key, reason } => json!({ "schema": schema, "key": key, "reason": reason }),

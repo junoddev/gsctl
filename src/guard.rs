@@ -10,12 +10,36 @@ struct Rule {
 
 const RULES: &[Rule] = &[
     Rule { schema: "org.gnome.desktop.remote-desktop.", key: None, reason: "can cut off remote desktop access" },
-    Rule { schema: "org.gnome.desktop.input-sources", key: None, reason: "can leave the keyboard typing the wrong layout" },
-    Rule { schema: "org.gnome.desktop.screensaver", key: Some("lock-enabled"), reason: "changes whether the session locks" },
-    Rule { schema: "org.gnome.desktop.lockdown", key: Some("disable-lock-screen"), reason: "changes whether the session can lock" },
-    Rule { schema: "org.gnome.desktop.a11y.", key: None, reason: "accessibility settings can make input or the screen hard to use" },
-    Rule { schema: "org.gnome.shell", key: Some("enabled-extensions"), reason: "replaces the whole list of enabled extensions" },
-    Rule { schema: "org.gnome.shell", key: Some("disable-user-extensions"), reason: "can disable every extension at once" },
+    Rule {
+        schema: "org.gnome.desktop.input-sources",
+        key: None,
+        reason: "can leave the keyboard typing the wrong layout",
+    },
+    Rule {
+        schema: "org.gnome.desktop.screensaver",
+        key: Some("lock-enabled"),
+        reason: "changes whether the session locks",
+    },
+    Rule {
+        schema: "org.gnome.desktop.lockdown",
+        key: Some("disable-lock-screen"),
+        reason: "changes whether the session can lock",
+    },
+    Rule {
+        schema: "org.gnome.desktop.a11y.",
+        key: None,
+        reason: "accessibility settings can make input or the screen hard to use",
+    },
+    Rule {
+        schema: "org.gnome.shell",
+        key: Some("enabled-extensions"),
+        reason: "replaces the whole list of enabled extensions",
+    },
+    Rule {
+        schema: "org.gnome.shell",
+        key: Some("disable-user-extensions"),
+        reason: "can disable every extension at once",
+    },
 ];
 
 /// Why `schema key` is guarded, or `None` if it isn't.
