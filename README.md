@@ -1,4 +1,4 @@
-# gsctl — gnome-settings-agent-proxy
+# gsctl
 
 A Rust CLI that gives AI agents a discoverable, validated, JSON interface to
 GNOME's settings (GSettings/dconf): search keys, inspect their types and allowed
