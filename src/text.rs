@@ -106,8 +106,16 @@ pub fn render(command: &str, out: &Value) -> String {
                     compact(&c["new"])
                 ));
             }
+            let reset = if out["dry_run"] == true { "would reset" } else { "reset" };
+            for c in out["pruned"].as_array().into_iter().flatten() {
+                line(format!("{} {} {reset} (pruned): {}", s(&c["schema"]), s(&c["key"]), compact(&c["old"])));
+            }
             let n = out["changes"].as_array().map_or(0, Vec::len);
-            line(format!("({n} {what}, {} unchanged)", out["unchanged"]));
+            let pruned = match out["pruned"].as_array() {
+                Some(p) => format!(", {} {reset}", p.len()),
+                None => String::new(),
+            };
+            line(format!("({n} {what}{pruned}, {} unchanged)", out["unchanged"]));
         }
         "export" if out.get("files").is_some() => {
             for f in out["files"].as_array().into_iter().flatten() {

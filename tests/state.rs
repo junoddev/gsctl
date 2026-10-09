@@ -249,6 +249,56 @@ fn batch_revert_checks_every_key_first() {
 }
 
 #[test]
+fn apply_prune_resets_unlisted_keys_in_the_files_areas() {
+    let env = TestEnv::new();
+    customise(&env); // count-i, dict-asv, launch-count (state), lock-delay (power), a custom keybinding
+    env.gsap(&["set", S, "name-s", "Mine"]).ok();
+    let doc = json!({"gsap": 1, "area": "other", "settings": { S: { "count-i": 42 } }});
+    let file = write_json(&env, "other.json", &doc);
+
+    let before = journal_len(&env);
+    let dry = env.gsap(&["apply", &file, "--prune", "--dry-run"]).ok();
+    let keys: Vec<&str> = dry["pruned"].as_array().unwrap().iter().map(|p| p["key"].as_str().unwrap()).collect();
+    assert_eq!(keys, ["dict-asv", "name-s"], "{dry}");
+    assert_eq!(dry["changes"], json!([]));
+    assert_eq!(journal_len(&env), before);
+
+    let out = env.gsap(&["apply", &file, "--prune"]).ok();
+    assert_eq!(out["pruned"].as_array().unwrap().len(), 2);
+    assert_eq!(env.gsap(&["get", S, "name-s"]).ok()["is_default"], true);
+    assert_eq!(env.gsap(&["get", S, "count-i"]).ok()["value"], 42);
+    assert_eq!(env.gsap(&["get", S, "launch-count"]).ok()["value"], 12, "app state is never pruned");
+    assert_eq!(env.gsap(&["get", "org.gnome.desktop.screensaver", "lock-delay"]).ok()["value"], 30, "other area");
+
+    env.gsap(&["revert", "last"]).ok();
+    assert_eq!(env.gsap(&["get", S, "name-s"]).ok()["value"], "Mine");
+
+    // Without --prune the same file leaves everything else alone.
+    assert_eq!(env.gsap(&["apply", &file]).ok()["pruned"], Value::Null);
+}
+
+#[test]
+fn apply_prune_covers_listed_instances_guards_and_needs_an_area() {
+    let env = TestEnv::new();
+    customise(&env);
+    let doc = json!({"gsap": 1, "area": "keybindings", "settings": {}});
+    let file = write_json(&env, "kb.json", &doc);
+    let out = env.gsap(&["apply", &file, "--prune"]).ok();
+    assert_eq!(out["pruned"].as_array().unwrap().len(), 4, "{out}");
+    assert_eq!(env.gsap(&["get", MEDIA_KEYS, "custom-keybindings"]).ok()["is_default"], true);
+    assert_eq!(env.gsap(&["get", CUSTOM, "name", "--path", CUSTOM0]).ok()["is_default"], true);
+
+    env.gsap(&["set", "org.gnome.desktop.screensaver", "lock-enabled", "false", "--yes"]).ok();
+    let power = write_json(&env, "power.json", &json!({"gsap": 1, "area": "power", "settings": {}}));
+    let r = env.gsap(&["apply", &power, "--prune"]);
+    assert_eq!(r.status, 6, "{}", r.stderr);
+    assert_eq!(env.gsap(&["get", "org.gnome.desktop.screensaver", "lock-enabled"]).ok()["value"], false);
+
+    let no_area = write_json(&env, "bare.json", &json!({"gsap": 1, "settings": {}}));
+    assert_eq!(env.gsap(&["apply", &no_area, "--prune"]).status, 2);
+}
+
+#[test]
 fn areas_lists_every_area() {
     let env = TestEnv::new();
     let out = env.gsap(&["areas"]).ok();

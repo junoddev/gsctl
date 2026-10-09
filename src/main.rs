@@ -130,6 +130,11 @@ enum Command {
         /// Confirm changes to guarded keys.
         #[arg(long)]
         yes: bool,
+        /// Also reset customised keys in the files' areas that the files don't
+        /// list, making them the whole state of those areas. App state is
+        /// never reset. Check with --dry-run first.
+        #[arg(long)]
+        prune: bool,
     },
     /// Stream changes as NDJSON: a "ready" event, then one "changed" event per
     /// key change (schema, key, value). Runs until interrupted, --count or
@@ -273,8 +278,8 @@ fn run(cli: &Cli) -> Result<Option<Value>> {
             let opts = ExportOpts { areas: area, out_dir: out.as_deref(), include_state: *include_state };
             state::export(&index, &opts)
         }
-        Command::Apply { files, area, dry_run, yes } => {
-            let opts = ApplyOpts { files, areas: area, dry_run: *dry_run, yes: *yes };
+        Command::Apply { files, area, dry_run, yes, prune } => {
+            let opts = ApplyOpts { files, areas: area, prune: *prune, dry_run: *dry_run, yes: *yes };
             state::apply(&index, &opts)
         }
         Command::Areas => Ok(state::areas()),

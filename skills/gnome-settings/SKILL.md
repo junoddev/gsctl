@@ -76,7 +76,9 @@ GNOME lists in a key (custom keybindings, Ptyxis profiles) are included as
 `apply` validates every value first and writes nothing if anything is wrong
 (error `batch_invalid` with a `problems` list). It only writes keys that
 differ, so running it twice is safe. It does not reset keys missing from the
-file. Edit state files with real values from `gsap schema`; a value shown as
+file unless you pass `--prune`. That also resets customised keys in the
+file's areas that the file doesn't list (never app state). Always run
+`--prune --dry-run` first and show the user the `pruned` list. Edit state files with real values from `gsap schema`; a value shown as
 `{"$gvariant": "..."}` is typed GVariant text and should be kept as is.
 
 ## Undo

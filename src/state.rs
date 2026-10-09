@@ -324,6 +324,8 @@ fn document<'a>(area: Value, items: impl Iterator<Item = &'a Item>) -> Value {
 pub struct ApplyOpts<'a> {
     pub files: &'a [PathBuf],
     pub areas: &'a [String],
+    /// Also reset customised keys in the files' areas that the files don't list.
+    pub prune: bool,
     pub dry_run: bool,
     pub yes: bool,
 }
@@ -334,15 +336,20 @@ struct Planned<'a> {
     key: String,
     value: Variant,
     old: Variant,
+    /// A `--prune` reset: `value` is the default.
+    reset: bool,
 }
 
 /// Apply state files: validate everything, then write only the keys that
 /// differ. Nothing is written if any value is invalid or a guarded key would
-/// change without `--yes`.
+/// change without `--yes`. With `prune`, customised keys in the files' areas
+/// that no file lists are reset too (app state is never pruned).
 pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
     let mut problems = Vec::new();
     let mut planned: Vec<Planned> = Vec::new();
     let mut unchanged = 0;
+    let mut listed: Vec<(String, Option<String>, String)> = Vec::new();
+    let mut file_areas: Vec<String> = Vec::new();
 
     for file in opts.files {
         let text =
@@ -355,6 +362,20 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
         let Some(settings) = doc["settings"].as_object() else {
             return Err(Error::Usage(format!("{} has no \"settings\" object", file.display())));
         };
+        if opts.prune {
+            let areas: Vec<&str> = match &doc["area"] {
+                Value::String(a) => vec![a.as_str()],
+                Value::Array(list) => list.iter().filter_map(Value::as_str).collect(),
+                _ => vec![],
+            };
+            if areas.is_empty() {
+                return Err(Error::Usage(format!(
+                    "{} names no \"area\", so --prune can't tell which keys it owns",
+                    file.display()
+                )));
+            }
+            file_areas.extend(areas.into_iter().map(str::to_string));
+        }
         for (instance, keys) in settings {
             let (schema, path) = match instance.split_once(':') {
                 Some((s, p)) => (s, Some(p)),
@@ -385,6 +406,7 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
                 continue;
             };
             for (key, j) in keys {
+                listed.push((schema.to_string(), path.map(str::to_string), key.clone()));
                 if !opts.areas.is_empty() && !opts.areas.iter().any(|a| a == area_of(schema, key)) {
                     continue;
                 }
@@ -416,10 +438,19 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
                     problem(key, &Error::NotWritable { schema: schema.to_string(), key: key.clone() });
                     continue;
                 }
-                planned.push(Planned { entry, path: path.map(str::to_string), key: key.clone(), value, old });
+                planned.push(Planned {
+                    entry,
+                    path: path.map(str::to_string),
+                    key: key.clone(),
+                    value,
+                    old,
+                    reset: false,
+                });
             }
         }
     }
+
+    let pruned = if opts.prune { plan_prune(index, opts, &file_areas, &listed, &mut problems)? } else { vec![] };
 
     if !problems.is_empty() {
         let exit = problems[0]["exit_code"].as_i64().unwrap_or(4) as i32;
@@ -432,15 +463,20 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
 
     let guarded: Vec<Value> = planned
         .iter()
+        .chain(&pruned)
         .filter_map(|p| {
             guard::check(&p.entry.id(), &p.key).map(|r| json!({ "schema": p.entry.id(), "key": p.key, "reason": r }))
         })
         .collect();
     let change_json = |p: &Planned| json!({ "schema": p.entry.id(), "path": p.path, "key": p.key, "old": to_json(&p.old), "new": to_json(&p.value) });
+    let prune_json = |list: Vec<Value>| if opts.prune { Value::from(list) } else { Value::Null };
 
     if opts.dry_run {
         let changes: Vec<Value> = planned.iter().map(change_json).collect();
-        return Ok(json!({ "dry_run": true, "changes": changes, "unchanged": unchanged, "requires_yes": guarded }));
+        let pruned = prune_json(pruned.iter().map(change_json).collect());
+        return Ok(json!({
+            "dry_run": true, "changes": changes, "pruned": pruned, "unchanged": unchanged, "requires_yes": guarded,
+        }));
     }
     // Even with nothing to change: in a sandbox the "unchanged" comparison
     // is against defaults, not the real settings.
@@ -459,17 +495,61 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
     }
 
     let batch = journal::new_id(Some("apply"));
-    let mut changes = Vec::new();
-    for p in planned {
+    let (mut changes, mut resets) = (Vec::new(), Vec::new());
+    for p in planned.iter().chain(&pruned) {
         let opts = WriteOpts { path: p.path.as_deref(), dry_run: false, yes: true };
         let tags = Tags { reverts: None, batch: Some(&batch) };
-        let out = write(p.entry, &p.key, &opts, "apply", Action::Set(p.value.clone()), tags)?;
-        let mut c = change_json(&p);
+        let action = if p.reset { Action::Reset } else { Action::Set(p.value.clone()) };
+        let out = write(p.entry, &p.key, &opts, "apply", action, tags)?;
+        let mut c = change_json(p);
         c["journal_id"] = out["journal_id"].clone();
-        changes.push(c);
+        if p.reset { resets.push(c) } else { changes.push(c) }
     }
-    let batch = if changes.is_empty() { Value::Null } else { batch.into() };
-    Ok(json!({ "dry_run": false, "batch": batch, "changes": changes, "unchanged": unchanged }))
+    let batch = if changes.is_empty() && resets.is_empty() { Value::Null } else { batch.into() };
+    Ok(json!({
+        "dry_run": false, "batch": batch, "changes": changes, "pruned": prune_json(resets), "unchanged": unchanged,
+    }))
+}
+
+/// `--prune`: customised keys (fixed schemas and listed instances) in the
+/// files' areas, narrowed by `--area`, that no file lists. App state is left
+/// alone, since `export` never writes it.
+fn plan_prune<'a>(
+    index: &'a Index,
+    opts: &ApplyOpts,
+    file_areas: &[String],
+    listed: &[(String, Option<String>, String)],
+    problems: &mut Vec<Value>,
+) -> Result<Vec<Planned<'a>>> {
+    let owned = |area: &str| {
+        file_areas.iter().any(|a| a == area) && (opts.areas.is_empty() || opts.areas.iter().any(|a| a == area))
+    };
+    let fixed = index.entries().iter().filter(|e| !e.relocatable()).map(|e| (e, None));
+    let instances = index.listed_instances().into_iter().map(|(e, p)| (e, Some(p)));
+    let mut out = Vec::new();
+    for (entry, path) in fixed.chain(instances) {
+        let id = entry.id();
+        let settings = entry.settings(path.as_deref())?;
+        for (key, old) in customised(entry, path.as_deref())? {
+            if !owned(area_of(&id, &key))
+                || state_reason(&id, &key).is_some()
+                || listed.iter().any(|(s, p, k)| *s == id && *p == path && *k == key)
+            {
+                continue;
+            }
+            if !settings.is_writable(&key) {
+                let err = Error::NotWritable { schema: id.clone(), key: key.clone() };
+                problems.push(json!({
+                    "file": null, "schema": id, "path": path, "key": key,
+                    "code": err.code(), "exit_code": err.exit_code(), "message": format!("--prune: {err}"),
+                }));
+                continue;
+            }
+            let value = settings.default_value(&key).unwrap_or_else(|| entry.schema.key(&key).default_value());
+            out.push(Planned { entry, path: path.clone(), key, value, old, reset: true });
+        }
+    }
+    Ok(out)
 }
 
 pub fn areas() -> Value {
