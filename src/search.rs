@@ -9,13 +9,27 @@ pub struct Doc<'a> {
     pub description: &'a str,
 }
 
-/// Score `doc` against `query`, or `None` if any query word is missing.
+/// How well a key matched a query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Match {
+    /// Number of query words found. Compared first, so keys matching more
+    /// words always rank higher.
+    pub words: usize,
+    pub score: u32,
+}
+
+/// Number of words in `query`, as `score` counts them.
+pub fn word_count(query: &str) -> usize {
+    words(query).len()
+}
+
+/// Score `doc` against `query`, or `None` if no query word appears.
 ///
-/// Every word must appear somewhere. Matches in the key name count most, then
-/// the schema id, the summary, and the description. Words are compared
+/// Matches in the key name count most, then the schema id, the summary, and
+/// the description. Words are compared
 /// case-insensitively, a trailing plural "s" is ignored, and `-`, `_` and `.`
 /// count as spaces, so "dynamic workspace" finds `dynamic-workspaces`.
-pub fn score(query: &str, doc: &Doc) -> Option<u32> {
+pub fn score(query: &str, doc: &Doc) -> Option<Match> {
     let words = words(query);
     if words.is_empty() {
         return None;
@@ -28,6 +42,7 @@ pub fn score(query: &str, doc: &Doc) -> Option<u32> {
     let schema_words = words_of(&schema);
 
     let mut total = 0;
+    let mut matched = 0;
     for w in &words {
         let mut s = 0;
         if key_words.iter().any(|t| same_word(t, w)) {
@@ -50,16 +65,16 @@ pub fn score(query: &str, doc: &Doc) -> Option<u32> {
         } else if description.contains(w.as_str()) {
             s += 2;
         }
-        if s == 0 {
-            return None;
+        if s > 0 {
+            matched += 1;
+            total += s;
         }
-        total += s;
     }
     // The whole query is the key name ("dynamic workspaces" → dynamic-workspaces).
     if words.join(" ") == key {
         total += 50;
     }
-    Some(total)
+    (matched > 0).then_some(Match { words: matched, score: total })
 }
 
 fn normalize(s: &str) -> String {
@@ -91,12 +106,24 @@ mod tests {
         Doc { schema, key, summary, description }
     }
 
+    fn sc(query: &str, d: &Doc) -> u32 {
+        score(query, d).unwrap().score
+    }
+
     #[test]
-    fn all_words_must_match() {
+    fn counts_matched_words() {
         let d = doc("org.gnome.mutter", "dynamic-workspaces", "Workspaces are managed dynamically", "");
-        assert!(score("dynamic workspaces", &d).is_some());
-        assert!(score("dynamic bananas", &d).is_none());
+        assert_eq!(score("dynamic workspaces", &d).unwrap().words, 2);
+        assert_eq!(score("dynamic bananas", &d).unwrap().words, 1);
+        assert!(score("bananas", &d).is_none());
         assert!(score("", &d).is_none());
+    }
+
+    #[test]
+    fn more_matched_words_always_rank_higher() {
+        let both = doc("org.a", "x", "", "dark theme");
+        let one = doc("org.a", "dark", "Dark dark dark", "");
+        assert!(score("dark theme", &both).unwrap() > score("dark theme", &one).unwrap());
     }
 
     #[test]
@@ -104,9 +131,9 @@ mod tests {
         let by_key = doc("org.a", "idle-delay", "", "");
         let by_summary = doc("org.a", "x", "Idle delay", "");
         let by_desc = doc("org.a", "x", "", "The idle delay in seconds");
-        let k = score("idle delay", &by_key).unwrap();
-        let s = score("idle delay", &by_summary).unwrap();
-        let d = score("idle delay", &by_desc).unwrap();
+        let k = sc("idle delay", &by_key);
+        let s = sc("idle delay", &by_summary);
+        let d = sc("idle delay", &by_desc);
         assert!(k > s && s > d, "{k} {s} {d}");
     }
 
@@ -114,21 +141,21 @@ mod tests {
     fn exact_key_name_gets_a_bonus() {
         let exact = doc("org.a", "dynamic-workspaces", "", "");
         let partial = doc("org.a", "dynamic-workspaces-extra", "", "");
-        assert!(score("dynamic-workspaces", &exact).unwrap() > score("dynamic-workspaces", &partial).unwrap());
+        assert!(sc("dynamic-workspaces", &exact) > sc("dynamic-workspaces", &partial));
     }
 
     #[test]
     fn substring_matches_count_less_than_whole_words() {
         let whole = doc("org.a", "workspace", "", "");
         let sub = doc("org.a", "subworkspace", "", "");
-        assert!(score("workspace", &whole).unwrap() > score("workspace", &sub).unwrap());
+        assert!(sc("workspace", &whole) > sc("workspace", &sub));
     }
 
     #[test]
     fn plurals_match_whole_words() {
         let d = doc("org.gnome.mutter", "dynamic-workspaces", "Workspaces are managed dynamically", "");
-        let plural = score("workspace", &d).unwrap();
-        let sub = score("workspace", &doc("org.a", "subworkspace", "", "")).unwrap();
+        let plural = sc("workspace", &d);
+        let sub = sc("workspace", &doc("org.a", "subworkspace", "", ""));
         assert!(plural > sub, "{plural} {sub}");
         assert!(score("dynamic workspace", &d).is_some());
     }

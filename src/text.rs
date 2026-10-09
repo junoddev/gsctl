@@ -32,7 +32,8 @@ pub fn render(command: &str, out: &Value) -> String {
                 ));
             }
             let shown = out["results"].as_array().map_or(0, Vec::len);
-            line(format!("({shown} of {} matches)", out["total"]));
+            let kind = if out["partial"] == true { " partial" } else { "" };
+            line(format!("({shown} of {}{kind} matches)", out["total"]));
         }
         "schema" if out.get("schemas").is_some() => {
             for sch in out["schemas"].as_array().into_iter().flatten() {
