@@ -167,6 +167,15 @@ pub fn render(command: &str, out: &Value) -> String {
             };
             line(format!("{} {what} {state}", s(&out["uuid"])));
         }
+        "doctor" => {
+            for c in out["checks"].as_array().into_iter().flatten() {
+                line(format!("{:<5} {:<17} {}", s(&c["status"]), s(&c["name"]), compact(&c["detail"])));
+                if let Some(h) = c["hint"].as_str() {
+                    line(format!("      {:<17} {h}", ""));
+                }
+            }
+            line(if out["ok"] == true { "ok".into() } else { "PROBLEMS FOUND".into() });
+        }
         _ => line(serde_json::to_string_pretty(out).unwrap()),
     }
     text

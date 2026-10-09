@@ -18,7 +18,7 @@ pub const KEYBINDING_SCHEMAS: &[&str] = &[
     "org.gnome.mutter.wayland.keybindings",
     MEDIA_KEYS,
 ];
-const MEDIA_KEYS: &str = "org.gnome.settings-daemon.plugins.media-keys";
+pub const MEDIA_KEYS: &str = "org.gnome.settings-daemon.plugins.media-keys";
 const CUSTOM_LIST_KEY: &str = "custom-keybindings";
 const CUSTOM_BASE: &str = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/";
 

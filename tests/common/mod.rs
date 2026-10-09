@@ -230,6 +230,20 @@ impl TestEnv {
         cmd
     }
 
+    /// Run a shell script inside one private D-Bus session (so several gsap
+    /// processes share a bus, e.g. `watch` plus `set`). `$GSAP` is the binary.
+    pub fn session_script(&self, script: &str) -> Run {
+        let out = self
+            .command("/bin/sh")
+            .args(["-c", script])
+            .env("GSAP", env!("CARGO_BIN_EXE_gsap"))
+            .env("TMP", self.path(""))
+            .output()
+            .expect("run script");
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        Run::from_output(out, stderr)
+    }
+
     /// Run gsap with the hermetic environment but no reachable session bus.
     pub fn gsap_without_bus(&self, args: &[&str]) -> Run {
         let cmd = self.command(env!("CARGO_BIN_EXE_gsap"));

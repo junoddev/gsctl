@@ -3,11 +3,13 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use gsap::commands::{self, WriteOpts};
+use gsap::doctor;
 use gsap::error::{Error, Result};
 use gsap::ext;
 use gsap::index::Index;
 use gsap::keys::{self, AddOpts};
 use gsap::state::{self, ApplyOpts, ExportOpts};
+use gsap::watch::{self, WatchOpts};
 use serde_json::Value;
 
 /// A discoverable, validated JSON interface to GNOME settings (GSettings/dconf).
@@ -129,6 +131,23 @@ enum Command {
         #[arg(long)]
         yes: bool,
     },
+    /// Stream changes as NDJSON: a "ready" event, then one "changed" event per
+    /// key change (schema, key, value). Runs until interrupted, --count or
+    /// --timeout.
+    Watch {
+        /// Only this schema and the schemas below it (repeatable).
+        #[arg(long)]
+        schema: Vec<String>,
+        /// Exit after this many changes.
+        #[arg(long)]
+        count: Option<usize>,
+        /// Exit after this many seconds.
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
+    /// Check that gsap can see and change this session's real settings
+    /// (session bus, dconf, sandboxing). Run it first in a new environment.
+    Doctor,
     /// List the export areas and the schemas each covers.
     Areas,
     /// GNOME Shell extensions: installed, enabled, and their settings.
@@ -220,8 +239,13 @@ enum KeysCommand {
     },
 }
 
-fn run(cli: &Cli) -> Result<Value> {
+/// The JSON document to print, or `None` for streaming commands that print
+/// their own output.
+fn run(cli: &Cli) -> Result<Option<Value>> {
     let index = Index::load()?;
+    if let Command::Watch { schema, count, timeout } = &cli.command {
+        return watch::watch(&index, &WatchOpts { prefixes: schema, count: *count, timeout: *timeout });
+    }
     match &cli.command {
         Command::Search { query, limit, schema } => commands::search(&index, &query.join(" "), *limit, schema),
         Command::Schema { schema, key, path } => {
@@ -246,6 +270,7 @@ fn run(cli: &Cli) -> Result<Value> {
             state::apply(&index, &opts)
         }
         Command::Areas => Ok(state::areas()),
+        Command::Doctor => doctor::doctor(&index),
         Command::Ext(e) => match e {
             ExtCommand::List => ext::list(&index),
             ExtCommand::Info { uuid } => ext::info(&index, uuid),
@@ -263,7 +288,9 @@ fn run(cli: &Cli) -> Result<Value> {
         },
         Command::History { limit, schema, key } => commands::history(*limit, schema, key.as_deref()),
         Command::Revert { id, force, dry_run, yes } => commands::revert(&index, id, *force, *dry_run, *yes),
+        Command::Watch { .. } => unreachable!("handled above"),
     }
+    .map(Some)
 }
 
 fn command_name(c: &Command) -> &'static str {
@@ -277,6 +304,8 @@ fn command_name(c: &Command) -> &'static str {
         Command::Export { .. } => "export",
         Command::Apply { .. } => "apply",
         Command::Areas => "areas",
+        Command::Doctor => "doctor",
+        Command::Watch { .. } => "watch",
         Command::Ext(ExtCommand::List) => "ext-list",
         Command::Ext(ExtCommand::Info { .. }) => "ext-info",
         Command::Ext(_) => "ext-enable",
@@ -308,7 +337,8 @@ fn main() -> ExitCode {
         }
     };
     match run(&cli) {
-        Ok(out) => {
+        Ok(None) => ExitCode::SUCCESS,
+        Ok(Some(out)) => {
             match cli.format {
                 Format::Json => println!("{}", serde_json::to_string_pretty(&out).unwrap()),
                 Format::Text => print!("{}", gsap::text::render(command_name(&cli.command), &out)),

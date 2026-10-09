@@ -121,12 +121,12 @@ struct ShellState {
 
 /// The GNOME Shell session mode and the extensions it enables by itself
 /// (Ubuntu's `ubuntu` mode enables the dock, DING, AppIndicators, ...).
-struct SessionMode {
-    name: String,
+pub struct SessionMode {
+    pub name: String,
     /// `env` when read from the session environment, `guess` when inferred
     /// from the only installed mode file, `default` for plain `user`.
-    source: &'static str,
-    extensions: Vec<String>,
+    pub source: &'static str,
+    pub extensions: Vec<String>,
 }
 
 fn mode_file(name: &str) -> Option<Value> {
@@ -136,7 +136,7 @@ fn mode_file(name: &str) -> Option<Value> {
     })
 }
 
-fn session_mode() -> SessionMode {
+pub fn session_mode() -> SessionMode {
     let from_env = std::env::var("GNOME_SHELL_SESSION_MODE").ok().filter(|m| !m.is_empty()).or_else(|| {
         let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok()?;
         let first = desktop.split(':').next()?.to_lowercase();

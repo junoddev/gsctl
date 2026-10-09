@@ -177,6 +177,12 @@ pub fn state_reason(schema: &str, key: &str) -> Option<&'static str> {
     if key == "tls-cert" || key == "tls-key" {
         return Some("machine-specific certificate path");
     }
+    if schema == "org.gnome.desktop.peripherals.keyboard" && key == "numlock-state" {
+        return Some("remembered NumLock state");
+    }
+    if key.ends_with("-selected") {
+        return Some("UI selection");
+    }
     None
 }
 
@@ -521,6 +527,9 @@ mod tests {
         assert!(state_reason("org.gnome.shell.extensions.tiling-assistant", "last-version-installed").is_some());
         assert!(state_reason("org.gnome.desktop.remote-desktop.rdp", "tls-key").is_some());
         assert!(state_reason("org.gnome.TextEditor", "window-maximized").is_some());
+        assert!(state_reason("org.gnome.desktop.peripherals.keyboard", "numlock-state").is_some());
+        assert!(state_reason("org.gnome.seahorse.manager", "keyrings-selected").is_some());
+        assert!(state_reason("org.gnome.desktop.peripherals.keyboard", "remember-numlock-state").is_none());
         assert!(state_reason("org.gnome.desktop.interface", "color-scheme").is_none());
         assert!(state_reason("org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-type").is_none());
     }

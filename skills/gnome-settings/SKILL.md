@@ -166,6 +166,13 @@ disabling one adds it to `disabled-extensions`.
 
 ## Other commands
 
+- `gsap doctor`: run first in a new environment. If `session_bus` is an
+  error or `dconf_database` warns, you are probably sandboxed: values read
+  as defaults and writes fail. Tell the user instead of retrying.
+- `gsap watch [--schema ...] [--count N] [--timeout S]`: NDJSON stream; wait
+  for the `ready` event, then each change arrives as
+  `{"event":"changed","schema","key","value"}`. Handy for "change it in
+  Settings and I'll capture the key".
 - `gsap changed [--schema org.gnome.desktop]`: keys that differ from their
   defaults. Useful to see what the user has customised. Some entries are app
   state (counters, timestamps, `migrated` flags) rather than preferences.

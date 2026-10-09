@@ -493,3 +493,35 @@ fn revert_relocatable_keys() {
     env.gsap(&["revert", "last"]).ok();
     assert_eq!(env.gsap(&["get", "org.gsap.test.reloc", "name", "--path", p]).ok()["value"], "");
 }
+
+// --- doctor -----------------------------------------------------------------
+
+fn check<'a>(out: &'a Value, name: &str) -> &'a Value {
+    out["checks"].as_array().unwrap().iter().find(|c| c["name"] == name).unwrap_or_else(|| panic!("no {name}"))
+}
+
+#[test]
+fn doctor_in_a_working_session() {
+    let env = TestEnv::new();
+    let out = env.gsap(&["doctor"]).ok();
+    assert_eq!(out["ok"], true, "{out}");
+    assert_eq!(check(&out, "settings_backend")["status"], "ok");
+    assert_eq!(check(&out, "session_bus")["status"], "ok");
+    assert_eq!(check(&out, "dconf_service")["status"], "ok");
+    assert_eq!(check(&out, "gnome_shell")["status"], "warn");
+    assert_eq!(check(&out, "dconf_database")["status"], "warn", "nothing written yet");
+    assert_eq!(check(&out, "session_mode")["detail"]["name"], "testmode");
+
+    env.gsap(&["set", S, "count-i", "1"]).ok();
+    assert_eq!(check(&env.gsap(&["doctor"]).ok(), "dconf_database")["status"], "ok");
+}
+
+#[test]
+fn doctor_without_a_bus() {
+    let env = TestEnv::new();
+    let r = env.gsap_without_bus(&["doctor"]);
+    assert_eq!(r.status, 0);
+    let out = r.json();
+    assert_eq!(out["ok"], false);
+    assert_eq!(check(&out, "session_bus")["status"], "error");
+}
