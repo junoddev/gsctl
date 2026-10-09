@@ -13,8 +13,8 @@ pub struct Doc<'a> {
 ///
 /// Every word must appear somewhere. Matches in the key name count most, then
 /// the schema id, the summary, and the description. Words are compared
-/// case-insensitively, and `-`, `_` and `.` count as spaces, so
-/// "dynamic workspaces" finds `dynamic-workspaces`.
+/// case-insensitively, a trailing plural "s" is ignored, and `-`, `_` and `.`
+/// count as spaces, so "dynamic workspace" finds `dynamic-workspaces`.
 pub fn score(query: &str, doc: &Doc) -> Option<u32> {
     let words = words(query);
     if words.is_empty() {
@@ -30,12 +30,12 @@ pub fn score(query: &str, doc: &Doc) -> Option<u32> {
     let mut total = 0;
     for w in &words {
         let mut s = 0;
-        if key_words.contains(&w.as_str()) {
+        if key_words.iter().any(|t| same_word(t, w)) {
             s += 30;
         } else if key.contains(w.as_str()) {
             s += 20;
         }
-        if schema_words.contains(&w.as_str()) {
+        if schema_words.iter().any(|t| same_word(t, w)) {
             s += 12;
         } else if schema.contains(w.as_str()) {
             s += 8;
@@ -75,7 +75,12 @@ fn words_of(s: &str) -> Vec<&str> {
 }
 
 fn contains_word(text: &str, w: &str) -> bool {
-    text.split(|c: char| !c.is_alphanumeric()).any(|t| t == w)
+    text.split(|c: char| !c.is_alphanumeric()).any(|t| same_word(t, w))
+}
+
+/// Equal, or equal apart from a plural "s" ("workspace" ~ "workspaces").
+fn same_word(a: &str, b: &str) -> bool {
+    a == b || a.strip_suffix('s') == Some(b) || b.strip_suffix('s') == Some(a)
 }
 
 #[cfg(test)]
@@ -115,8 +120,17 @@ mod tests {
     #[test]
     fn substring_matches_count_less_than_whole_words() {
         let whole = doc("org.a", "workspace", "", "");
-        let sub = doc("org.a", "workspaces-only", "", "");
+        let sub = doc("org.a", "subworkspace", "", "");
         assert!(score("workspace", &whole).unwrap() > score("workspace", &sub).unwrap());
+    }
+
+    #[test]
+    fn plurals_match_whole_words() {
+        let d = doc("org.gnome.mutter", "dynamic-workspaces", "Workspaces are managed dynamically", "");
+        let plural = score("workspace", &d).unwrap();
+        let sub = score("workspace", &doc("org.a", "subworkspace", "", "")).unwrap();
+        assert!(plural > sub, "{plural} {sub}");
+        assert!(score("dynamic workspace", &d).is_some());
     }
 
     #[test]
