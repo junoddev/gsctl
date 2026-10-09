@@ -180,6 +180,9 @@ pub fn state_reason(schema: &str, key: &str) -> Option<&'static str> {
     if schema == "org.gnome.desktop.peripherals.keyboard" && key == "numlock-state" {
         return Some("remembered NumLock state");
     }
+    if key == "overridden-settings" {
+        return Some("an extension's saved copy of the settings it overrides");
+    }
     if key.ends_with("-selected") {
         return Some("UI selection");
     }
@@ -518,6 +521,7 @@ mod tests {
         assert!(state_reason("org.gnome.TextEditor", "window-maximized").is_some());
         assert!(state_reason("org.gnome.desktop.peripherals.keyboard", "numlock-state").is_some());
         assert!(state_reason("org.gnome.seahorse.manager", "keyrings-selected").is_some());
+        assert!(state_reason("org.gnome.shell.extensions.tiling-assistant", "overridden-settings").is_some());
         assert!(state_reason("org.gnome.desktop.peripherals.keyboard", "remember-numlock-state").is_none());
         assert!(state_reason("org.gnome.desktop.interface", "color-scheme").is_none());
         assert!(state_reason("org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-type").is_none());

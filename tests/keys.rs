@@ -126,6 +126,8 @@ fn remove_deletes_a_custom_binding_and_revert_brings_it_back() {
     env.gsap(&["keys", "remove", "custom1"]).ok();
     env.gsap(&["keys", "remove", CUSTOM0]).ok();
     assert_eq!(env.gsap(&["keys", "list", "--custom"]).ok()["count"], 0);
+    // The last removal resets the list instead of pinning [].
+    assert_eq!(env.gsap(&["get", MEDIA_KEYS, "custom-keybindings"]).ok()["is_default"], true);
 }
 
 #[test]

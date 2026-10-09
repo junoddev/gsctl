@@ -206,7 +206,8 @@ pub fn parse_input(raw: &str, ty: &VariantTy) -> Result<Variant, String> {
     };
     let gvariant_err = match Variant::parse(Some(ty), raw) {
         Ok(v) => return Ok(v),
-        Err(e) => e.message().to_string(),
+        // GLib prefixes a character range ("0-3:unknown keyword").
+        Err(e) => e.message().split_once(':').map_or(e.message(), |(_, m)| m).to_string(),
     };
     if ty == VariantTy::STRING {
         return Ok(raw.into());
@@ -214,7 +215,8 @@ pub fn parse_input(raw: &str, ty: &VariantTy) -> Result<Variant, String> {
     if ty.as_str() == "ms" {
         return Ok(Variant::from_some(&raw.into()));
     }
-    Err(json_err.unwrap_or_else(|| format!("not valid JSON or GVariant text for {}: {gvariant_err}", describe(ty))))
+    Err(json_err
+        .unwrap_or_else(|| format!("{raw:?} is not valid JSON or GVariant text for {} ({gvariant_err})", describe(ty))))
 }
 
 /// A short English description of a GVariant type, for error messages.

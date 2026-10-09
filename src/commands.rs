@@ -317,16 +317,23 @@ pub fn history(limit: usize, prefixes: &[String], key: Option<&str>) -> Result<V
     Ok(json!({ "journal": journal::path(), "total": total, "entries": shown }))
 }
 
-/// Undo journal entry `id`, every entry of batch `id` (an `apply`), or `last`
-/// (the newest entry, or its whole batch if it has one). Each key goes back to
+/// Undo journal entry `id`, every entry of batch `id` (an `apply`), or `last`:
+/// the newest change that isn't a revert and hasn't been reverted (with its
+/// whole batch), so repeated `revert last` walks back like an undo stack. To
+/// redo, revert the revert by id. Each key goes back to
 /// its previous value, or is reset if it was at its default. Refuses if a key
 /// has changed since, unless `force`; for a batch, every key is checked before
 /// any is written.
 pub fn revert(index: &Index, id: &str, force: bool, dry_run: bool, yes: bool) -> Result<Value> {
     let entries = read_journal()?;
     let batch_of = |e: &Value| e["batch"].as_str().map(str::to_string);
+    let undone: Vec<&str> = entries.iter().filter_map(|e| e["reverts"].as_str()).collect();
+    let is_undone = |e: &Value| match batch_of(e) {
+        Some(b) => entries.iter().any(|x| x["batch"] == b.as_str() && undone.contains(&x["id"].as_str().unwrap_or(""))),
+        None => undone.contains(&e["id"].as_str().unwrap_or("")),
+    };
     let target: Vec<&Value> = match id {
-        "last" => match entries.last() {
+        "last" => match entries.iter().rev().find(|e| e["reverts"].is_null() && !is_undone(e)) {
             Some(e) => match batch_of(e) {
                 Some(b) => entries.iter().filter(|x| x["batch"] == b.as_str()).collect(),
                 None => vec![e],

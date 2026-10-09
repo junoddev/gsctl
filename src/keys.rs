@@ -306,8 +306,10 @@ pub fn remove(index: &Index, which: &str, dry_run: bool) -> Result<Value> {
     let batch = journal::new_id(Some("keys-remove"));
     let tags = Tags { reverts: None, batch: Some(&batch) };
     let list: Vec<&String> = existing.iter().filter(|p| **p != path).collect();
+    // Back to the default rather than pinning an empty list.
+    let action = if list.is_empty() { Action::Reset } else { Action::Set(list.to_variant()) };
     let lopts = WriteOpts { path: None, dry_run, yes: false };
-    let mut writes = vec![write(media, CUSTOM_LIST_KEY, &lopts, "keys-remove", Action::Set(list.to_variant()), tags)?];
+    let mut writes = vec![write(media, CUSTOM_LIST_KEY, &lopts, "keys-remove", action, tags)?];
     let wopts = WriteOpts { path: Some(&path), dry_run, yes: false };
     for key in custom.keys() {
         if settings.user_value(&key).is_some() {

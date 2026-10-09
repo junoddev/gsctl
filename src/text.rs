@@ -54,17 +54,14 @@ pub fn render(command: &str, out: &Value) -> String {
             }
         }
         "get" => line(compact(&out["value"])),
-        "set" | "reset" | "revert" => {
-            let what = if out["dry_run"] == true { "would change" } else { "changed" };
-            let what = if out["changed"] == false { "unchanged" } else { what };
-            line(format!(
-                "{} {} {what}: {} -> {}",
-                s(&out["schema"]),
-                s(&out["key"]),
-                compact(&out["old"]),
-                compact(&out["new"])
-            ));
+        "revert" if out.get("results").is_some() => {
+            for r in out["results"].as_array().into_iter().flatten() {
+                line(write_text(r));
+            }
+            let what = if out["dry_run"] == true { "would revert" } else { "reverted" };
+            line(format!("({what} batch {})", s(&out["reverts_batch"])));
         }
+        "set" | "reset" | "revert" => line(write_text(out)),
         "changed" => {
             for c in out["changed"].as_array().into_iter().flatten() {
                 let instance = match c["path"].as_str() {
@@ -111,6 +108,13 @@ pub fn render(command: &str, out: &Value) -> String {
             }
             let n = out["changes"].as_array().map_or(0, Vec::len);
             line(format!("({n} {what}, {} unchanged)", out["unchanged"]));
+        }
+        "export" if out.get("files").is_some() => {
+            for f in out["files"].as_array().into_iter().flatten() {
+                line(format!("{:<12} {}  ({} keys)", s(&f["area"]), s(&f["path"]), f["keys"]));
+            }
+            let skipped = out["skipped_state"].as_array().map_or(0, Vec::len);
+            line(format!("({skipped} app-state keys skipped)"));
         }
         "areas" => {
             for a in out["areas"].as_array().into_iter().flatten() {
@@ -192,6 +196,20 @@ pub fn render(command: &str, out: &Value) -> String {
         _ => line(serde_json::to_string_pretty(out).unwrap()),
     }
     text
+}
+
+/// One write: `set`, `reset`, `revert`, or one result of a batch revert.
+fn write_text(w: &Value) -> String {
+    let what = if w["dry_run"] == true { "would change" } else { "changed" };
+    let what = if w["changed"] == false { "unchanged" } else { what };
+    let instance = match w["path"].as_str() {
+        Some(p) => format!("{}:{p}", s(&w["schema"])),
+        None => s(&w["schema"]).to_string(),
+    };
+    // A reset can change nothing visible but drop a user value.
+    let note =
+        if w["op"] == "reset" && w["old"] == w["new"] && w["changed"] == true { " (now the default)" } else { "" };
+    format!("{instance} {} {what}: {} -> {}{note}", s(&w["key"]), compact(&w["old"]), compact(&w["new"]))
 }
 
 fn binding_text(b: &Value) -> String {

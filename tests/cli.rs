@@ -524,6 +524,24 @@ fn revert_dry_run_unknown_ids_and_guards() {
 }
 
 #[test]
+fn revert_last_walks_back_like_an_undo_stack() {
+    let env = TestEnv::new();
+    env.gsap(&["set", S, "count-i", "1"]).ok();
+    env.gsap(&["set", S, "count-i", "2"]).ok();
+    env.gsap(&["revert", "last"]).ok();
+    assert_eq!(env.gsap(&["get", S, "count-i"]).ok()["value"], 1);
+    // The second undo reverts the first set, not the revert just made.
+    let undo = env.gsap(&["revert", "last"]).ok();
+    let got = env.gsap(&["get", S, "count-i"]).ok();
+    assert_eq!(got["is_default"], true, "{got}");
+    assert_eq!(env.gsap(&["revert", "last"]).status, 3, "nothing left to undo");
+
+    // Redo is reverting the revert by id.
+    env.gsap(&["revert", &id_of(&undo)]).ok();
+    assert_eq!(env.gsap(&["get", S, "count-i"]).ok()["value"], 1);
+}
+
+#[test]
 fn revert_relocatable_keys() {
     let env = TestEnv::new();
     let p = "/org/gsap/test/custom1/";

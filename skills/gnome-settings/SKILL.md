@@ -88,7 +88,9 @@ Every `set`, `reset` and `revert` is journaled with the previous value.
     gsap revert last
 
 `revert` restores the previous value, or resets the key if it was at its
-default. If the key has changed since that entry it refuses (exit 7); check
+default. `revert last` is an undo stack: each run undoes the newest change
+not yet undone (a whole batch for `apply`, `keys`, `ext`). To redo, revert
+the revert by its id. If the key has changed since that entry it refuses (exit 7); check
 `gsap get` and `gsap history --key <key>`, and only use `--force` if
 overwriting the newer value is really intended. `gsap reset <schema> <key>`
 goes straight back to the default.
