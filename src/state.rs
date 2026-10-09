@@ -28,9 +28,9 @@ use serde_json::{Map, Value, json};
 use crate::commands::{Action, Tags, WriteOpts, range_error, write};
 use crate::convert::{from_json, to_json};
 use crate::error::{Error, Result};
-use crate::guard;
 use crate::index::{Entry, Index};
 use crate::journal;
+use crate::{doctor, guard};
 
 pub const FORMAT_VERSION: u64 = 1;
 const GVARIANT: &str = "$gvariant";
@@ -453,6 +453,9 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
         let changes: Vec<Value> = planned.iter().map(change_json).collect();
         return Ok(json!({ "dry_run": true, "changes": changes, "unchanged": unchanged, "requires_yes": guarded }));
     }
+    // Even with nothing to change: in a sandbox the "unchanged" comparison
+    // is against defaults, not the real settings.
+    doctor::require_writable()?;
     if !guarded.is_empty() && !opts.yes {
         let first = &guarded[0];
         return Err(Error::Guarded {

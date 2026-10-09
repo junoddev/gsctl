@@ -6,10 +6,10 @@ use serde_json::{Value, json};
 
 use crate::convert::{self, describe, to_json};
 use crate::error::{Error, Result};
-use crate::guard;
 use crate::index::{Entry, Index};
 use crate::journal;
 use crate::search::{self, Doc};
+use crate::{doctor, guard};
 
 /// `range` of a key: enum choices, flags, or min/max; `null` when any value of
 /// the type is allowed.
@@ -249,6 +249,7 @@ pub(crate) fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action
         out["requires_yes"] = guarded.is_some().into();
         return Ok(out);
     }
+    doctor::require_writable()?;
     if let Some(reason) = guarded
         && !opts.yes
     {

@@ -319,16 +319,39 @@ fn extension_keys_are_writable() {
     assert_eq!(env.gsap(&["get", ext, "show-indicator"]).ok()["value"], false);
 }
 
-#[test]
-fn dropped_writes_are_errors() {
-    let env = TestEnv::new();
-    let r = env.gsap_without_bus(&["set", S, "name-s", "Lost"]);
-    assert_eq!(r.status, 1, "stdout:\n{}\nstderr:\n{}", r.stdout, r.stderr);
+/// The JSON error line of a run without a bus (GLib may log to stderr too).
+fn no_bus_error(r: &common::Run) -> Value {
+    assert_eq!(r.status, 5, "stdout:\n{}\nstderr:\n{}", r.stdout, r.stderr);
     let err = r.stderr.lines().find(|l| l.starts_with('{')).expect("JSON error line");
     let err: Value = serde_json::from_str(err).unwrap();
-    assert_eq!(err["error"]["code"], "internal");
-    assert!(err["error"]["message"].as_str().unwrap().contains("did not take effect"));
+    assert_eq!(err["error"]["code"], "no_session", "{err}");
+    err
+}
+
+#[test]
+fn writes_without_a_session_bus_are_refused() {
+    let env = TestEnv::new();
+    let err = no_bus_error(&env.gsap_without_bus(&["set", S, "name-s", "Lost"]));
+    assert!(err["error"]["message"].as_str().unwrap().contains("session bus"), "{err}");
+    // Setting the value the sandbox already reads (the default) used to
+    // "succeed" with changed: false, since read-back can't catch it.
+    no_bus_error(&env.gsap_without_bus(&["set", S, "name-s", "Adwaita"]));
+    no_bus_error(&env.gsap_without_bus(&["reset", S, "name-s"]));
+    no_bus_error(&env.gsap_without_bus(&["keys", "add", "T", "<Super><Alt>F12", "true"]));
+    no_bus_error(&env.gsap_without_bus(&["ext", "disable", common::EXTENSION_UUID]));
+
+    // An apply with nothing to change is refused too: "unchanged" was
+    // judged against defaults.
+    let file = env.path("state.json");
+    std::fs::write(&file, format!(r#"{{"gsap": 1, "settings": {{"{S}": {{"name-s": "Adwaita"}}}}}}"#)).unwrap();
+    no_bus_error(&env.gsap_without_bus(&["apply", file.to_str().unwrap()]));
     assert!(journal(&env).is_empty());
+    assert!(!env.user_db().exists());
+
+    // Dry runs still work.
+    let r = env.gsap_without_bus(&["set", S, "name-s", "Lost", "--dry-run"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(r.json()["dry_run"], true);
 }
 
 // --- changed ----------------------------------------------------------------

@@ -14,6 +14,8 @@ pub enum Error {
     InvalidValue { message: String, details: Value },
     #[error("key is not writable (locked by the system administrator): {schema} {key}")]
     NotWritable { schema: String, key: String },
+    #[error("cannot write settings: {0}. Run gsap inside the desktop session, not a sandbox (see `gsap doctor`)")]
+    NoSession(String),
     #[error("{schema} {key} is a guarded key: {reason}. Re-run with --yes to change it")]
     Guarded { schema: String, key: String, reason: String },
     #[error("extension not installed: {0}")]
@@ -41,7 +43,7 @@ impl Error {
             | Error::EntryNotFound(_)
             | Error::ExtensionNotFound(_) => 3,
             Error::InvalidValue { .. } => 4,
-            Error::NotWritable { .. } => 5,
+            Error::NotWritable { .. } | Error::NoSession(_) => 5,
             Error::Guarded { .. } => 6,
             Error::Conflict { .. } => 7,
             Error::Batch { exit, .. } => *exit,
@@ -56,6 +58,7 @@ impl Error {
             Error::KeyNotFound { .. } => "key_not_found",
             Error::InvalidValue { .. } => "invalid_value",
             Error::NotWritable { .. } => "not_writable",
+            Error::NoSession(_) => "no_session",
             Error::Guarded { .. } => "guarded",
             Error::EntryNotFound(_) => "entry_not_found",
             Error::ExtensionNotFound(_) => "extension_not_found",
@@ -84,6 +87,7 @@ impl Error {
             Error::ExtensionNotFound(uuid) => json!({ "uuid": uuid, "hint": "see `gsap ext list`" }),
             Error::Conflict { id, .. } => json!({ "id": id }),
             Error::Batch { problems, .. } => json!({ "problems": problems }),
+            Error::NoSession(reason) => json!({ "reason": reason, "hint": "run `gsap doctor`" }),
             Error::Usage(_) | Error::Internal(_) => Value::Null,
         };
         if let (Value::Object(err), Value::Object(extra)) = (&mut err, extra) {

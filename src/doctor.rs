@@ -6,7 +6,9 @@
 use gio::prelude::*;
 use serde_json::{Value, json};
 
-use crate::error::Result;
+use std::sync::OnceLock;
+
+use crate::error::{Error, Result};
 use crate::index::{Index, Origin};
 use crate::{ext, journal};
 
@@ -47,6 +49,33 @@ fn activatable(bus: &gio::DBusConnection, name: &str) -> Option<bool> {
     Some(reply.child_value(0).get::<Vec<String>>()?.iter().any(|n| n == name))
 }
 
+/// Why writes can't reach the real dconf database, if they can't: the
+/// fatal subset of `doctor`, checked before every write. GSettings drops
+/// writes silently in these cases, and read-back can't tell when the new
+/// value equals what the sandbox reads (usually the default).
+fn write_blocker() -> Option<String> {
+    static BLOCKER: OnceLock<Option<String>> = OnceLock::new();
+    BLOCKER
+        .get_or_init(|| {
+            let backend = gio::SettingsBackend::default().type_().name().to_string();
+            if !backend.contains("DConf") {
+                return Some(format!("GSettings is using {backend}, not dconf, so changes won't persist"));
+            }
+            let bus = match gio::bus_get_sync(gio::BusType::Session, None::<&gio::Cancellable>) {
+                Ok(bus) => bus,
+                Err(e) => return Some(format!("no session bus ({}), so dconf can't commit changes", e.message())),
+            };
+            let reachable = name_has_owner(&bus, "ca.desrt.dconf").unwrap_or(false)
+                || activatable(&bus, "ca.desrt.dconf").unwrap_or(false);
+            (!reachable).then(|| "ca.desrt.dconf is neither running nor activatable on the session bus".to_string())
+        })
+        .clone()
+}
+
+pub fn require_writable() -> Result<()> {
+    write_blocker().map_or(Ok(()), |reason| Err(Error::NoSession(reason)))
+}
+
 pub fn doctor(index: &Index) -> Result<Value> {
     let mut checks = Vec::new();
 
@@ -69,7 +98,7 @@ pub fn doctor(index: &Index) -> Result<Value> {
                 "session_bus",
                 "error",
                 e.message(),
-                Some("no session bus: writes are silently dropped by GSettings (gsap reports them as errors). Run inside the desktop session, not a sandbox"),
+                Some("no session bus: writes are silently dropped by GSettings, so gsap refuses them (exit 5). Run inside the desktop session, not a sandbox"),
             ));
         }
         Ok(bus) => {

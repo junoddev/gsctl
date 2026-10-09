@@ -117,7 +117,7 @@ shell.
 | 2 | usage | fix the command line (relocatable schemas need `--path`) |
 | 3 | schema or key not found | `gsap search` for the right name |
 | 4 | invalid value | read `type`, `range` and `message` in the error and retry |
-| 5 | not writable | locked by the administrator; tell the user |
+| 5 | not writable | `not_writable`: locked by the administrator; `no_session`: no session bus or dconf-service (sandboxed), so nothing can be saved. Tell the user either way |
 | 6 | guarded key | ask the user, then re-run with `--yes` |
 | 7 | conflict | `revert` of a key changed since; inspect, then `--force` if intended |
 
