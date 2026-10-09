@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
+use gio::prelude::*;
 use gio::{SettingsSchema, SettingsSchemaKey, SettingsSchemaSource};
 use serde_json::{Value, json};
 
@@ -63,7 +64,7 @@ impl Entry {
                 )));
             }
             (true, Some(p)) => {
-                if !(p.starts_with('/') && p.ends_with('/') && !p.contains("//")) {
+                if !valid_path(p) {
                     return Err(Error::Usage(format!("invalid path {p:?}: must start and end with '/'")));
                 }
                 Some(p)
@@ -87,6 +88,34 @@ impl Entry {
             "origin": self.origin.to_json(),
         })
     }
+}
+
+/// A relocatable schema whose instances are listed in a key of another
+/// schema. `path` turns a list item into the instance path (`{}` is the item).
+struct Listed {
+    list_schema: &'static str,
+    list_key: &'static str,
+    schema: &'static str,
+    path: &'static str,
+}
+
+const LISTED: &[Listed] = &[
+    Listed {
+        list_schema: "org.gnome.settings-daemon.plugins.media-keys",
+        list_key: "custom-keybindings",
+        schema: "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding",
+        path: "{}",
+    },
+    Listed {
+        list_schema: "org.gnome.Ptyxis",
+        list_key: "profile-uuids",
+        schema: "org.gnome.Ptyxis.Profile",
+        path: "/org/gnome/Ptyxis/Profiles/{}/",
+    },
+];
+
+fn valid_path(p: &str) -> bool {
+    p.starts_with('/') && p.ends_with('/') && !p.contains("//")
 }
 
 pub struct Index {
@@ -139,6 +168,27 @@ impl Index {
 
     pub fn get(&self, id: &str) -> Result<&Entry> {
         self.entries.iter().find(|e| e.schema.id() == id).ok_or_else(|| Error::SchemaNotFound(id.to_string()))
+    }
+
+    /// The current instances of relocatable schemas that GNOME tracks in a
+    /// list key (custom keybindings, Ptyxis profiles). Items that don't make
+    /// a valid path are skipped.
+    pub fn listed_instances(&self) -> Vec<(&Entry, String)> {
+        let mut out = Vec::new();
+        for l in LISTED {
+            let (Ok(list), Ok(entry)) = (self.get(l.list_schema), self.get(l.schema)) else { continue };
+            if !list.schema.has_key(l.list_key) || !entry.relocatable() {
+                continue;
+            }
+            let Ok(settings) = list.settings(None) else { continue };
+            for item in settings.strv(l.list_key) {
+                let path = l.path.replace("{}", &item);
+                if valid_path(&path) {
+                    out.push((entry, path));
+                }
+            }
+        }
+        out
     }
 }
 

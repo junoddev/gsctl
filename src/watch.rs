@@ -16,8 +16,6 @@ use crate::commands::matches_prefix;
 use crate::convert::to_json;
 use crate::error::Result;
 use crate::index::Index;
-use crate::keys::MEDIA_KEYS;
-use crate::state::CUSTOM_KEYBINDING_SCHEMA;
 
 pub struct WatchOpts<'a> {
     pub prefixes: &'a [String],
@@ -76,13 +74,10 @@ pub fn watch(index: &Index, opts: &WatchOpts) -> Result<Option<Value>> {
     for entry in index.entries().iter().filter(|e| !e.relocatable() && matches_prefix(&e.id(), opts.prefixes)) {
         subscribe(entry, None)?;
     }
-    // Custom keybinding instances that exist now.
-    if let (Ok(custom), Ok(media)) = (index.get(CUSTOM_KEYBINDING_SCHEMA), index.get(MEDIA_KEYS))
-        && matches_prefix(&custom.id(), opts.prefixes)
-        && media.schema.has_key("custom-keybindings")
-    {
-        for path in media.settings(None)?.strv("custom-keybindings") {
-            subscribe(custom, Some(path.to_string()))?;
+    // Listed relocatable instances (custom keybindings, ...) that exist now.
+    for (entry, path) in index.listed_instances() {
+        if matches_prefix(&entry.id(), opts.prefixes) {
+            subscribe(entry, Some(path))?;
         }
     }
 

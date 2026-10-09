@@ -440,13 +440,15 @@ fn read_journal() -> Result<Vec<Value>> {
 }
 
 pub fn changed(index: &Index, prefixes: &[String]) -> Result<Value> {
+    let fixed = index.entries().iter().filter(|e| !e.relocatable()).map(|e| (e, None));
+    let listed = index.listed_instances().into_iter().map(|(e, p)| (e, Some(p)));
     let mut items = Vec::new();
-    for entry in index.entries() {
+    for (entry, path) in fixed.chain(listed) {
         let id = entry.id();
-        if entry.relocatable() || !matches_prefix(&id, prefixes) {
+        if !matches_prefix(&id, prefixes) {
             continue;
         }
-        let settings = entry.settings(None)?;
+        let settings = entry.settings(path.as_deref())?;
         for name in entry.keys() {
             let Some(user) = settings.user_value(&name) else { continue };
             let default = settings.default_value(&name).unwrap_or_else(|| entry.schema.key(&name).default_value());
@@ -455,6 +457,7 @@ pub fn changed(index: &Index, prefixes: &[String]) -> Result<Value> {
             }
             items.push(json!({
                 "schema": id,
+                "path": path,
                 "key": name,
                 "type": user.type_().as_str(),
                 "value": to_json(&user),

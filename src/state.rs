@@ -228,18 +228,6 @@ fn customised(entry: &Entry, path: Option<&str>) -> Result<Vec<(String, Variant)
     Ok(out)
 }
 
-/// Custom keybinding paths listed in media-keys `custom-keybindings`.
-fn custom_keybinding_paths(index: &Index) -> Vec<String> {
-    let Ok(media) = index.get(MEDIA_KEYS_SCHEMA) else { return vec![] };
-    if !media.schema.has_key("custom-keybindings") || index.get(CUSTOM_KEYBINDING_SCHEMA).is_err() {
-        return vec![];
-    }
-    match media.settings(None) {
-        Ok(s) => s.strv("custom-keybindings").iter().map(|p| p.to_string()).collect(),
-        Err(_) => vec![],
-    }
-}
-
 pub struct ExportOpts<'a> {
     pub areas: &'a [String],
     pub out_dir: Option<&'a Path>,
@@ -281,10 +269,8 @@ pub fn export(index: &Index, opts: &ExportOpts) -> Result<Value> {
     for entry in index.entries().iter().filter(|e| !e.relocatable()) {
         add(entry, None, &mut items)?;
     }
-    if let Ok(custom) = index.get(CUSTOM_KEYBINDING_SCHEMA) {
-        for path in custom_keybinding_paths(index) {
-            add(custom, Some(&path), &mut items)?;
-        }
+    for (entry, path) in index.listed_instances() {
+        add(entry, Some(&path), &mut items)?;
     }
 
     let mut by_area: BTreeMap<&str, Vec<&Item>> = BTreeMap::new();

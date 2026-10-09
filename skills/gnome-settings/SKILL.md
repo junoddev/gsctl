@@ -63,8 +63,9 @@ All output is JSON on stdout. Errors are JSON on stderr with a `code`, a
 
 `gsap export` writes only customised keys, one JSON file per area
 (`extensions`, `keybindings`, `interface`, `shell`, `input`, `power`,
-`remote`, `a11y`, `other`), sorted for clean diffs. Custom keybindings are
-included as `schema:/path/` entries. App state (counters, timestamps,
+`remote`, `a11y`, `other`), sorted for clean diffs. Relocatable instances that
+GNOME lists in a key (custom keybindings, Ptyxis profiles) are included as
+`schema:/path/` entries. App state (counters, timestamps,
 `migrated` flags, window geometry, TLS paths) is skipped and listed under
 `skipped_state`; don't add it back by hand.
 

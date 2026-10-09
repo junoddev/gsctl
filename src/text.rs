@@ -67,9 +67,12 @@ pub fn render(command: &str, out: &Value) -> String {
         }
         "changed" => {
             for c in out["changed"].as_array().into_iter().flatten() {
+                let instance = match c["path"].as_str() {
+                    Some(p) => format!("{}:{p}", s(&c["schema"])),
+                    None => s(&c["schema"]).to_string(),
+                };
                 line(format!(
-                    "{} {} = {}  (default {})",
-                    s(&c["schema"]),
+                    "{instance} {} = {}  (default {})",
                     s(&c["key"]),
                     compact(&c["value"]),
                     compact(&c["default"])

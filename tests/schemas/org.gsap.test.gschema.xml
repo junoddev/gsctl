@@ -219,4 +219,22 @@
       <summary>Binding</summary>
     </key>
   </schema>
+
+  <!-- Stand-ins for Ptyxis: profiles are relocatable, listed by uuid. -->
+  <schema id="org.gnome.Ptyxis" path="/org/gnome/Ptyxis/">
+    <key name="profile-uuids" type="as">
+      <default>[]</default>
+      <summary>Profile uuids</summary>
+    </key>
+  </schema>
+  <schema id="org.gnome.Ptyxis.Profile">
+    <key name="label" type="s">
+      <default>''</default>
+      <summary>Label</summary>
+    </key>
+    <key name="opacity" type="d">
+      <default>1.0</default>
+      <summary>Opacity</summary>
+    </key>
+  </schema>
 </schemalist>

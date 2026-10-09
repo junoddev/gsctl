@@ -118,6 +118,29 @@ fn export_then_apply_reproduces_the_settings() {
 }
 
 #[test]
+fn export_includes_listed_ptyxis_profiles() {
+    let source = TestEnv::new();
+    let profile = |uuid: &str| format!("/org/gnome/Ptyxis/Profiles/{uuid}/");
+    source.gsap(&["set", "org.gnome.Ptyxis", "profile-uuids", r#"["aa11", "bb22"]"#]).ok();
+    source.gsap(&["set", "org.gnome.Ptyxis.Profile", "label", "Work", "--path", &profile("aa11")]).ok();
+    source.gsap(&["set", "org.gnome.Ptyxis.Profile", "opacity", "0.9", "--path", &profile("aa11")]).ok();
+    // A stale profile that is no longer listed stays out of the export.
+    source.gsap(&["set", "org.gnome.Ptyxis.Profile", "label", "Old", "--path", &profile("cc33")]).ok();
+
+    let doc = source.gsap(&["export"]).ok();
+    let s = doc["settings"].as_object().unwrap();
+    assert_eq!(s[&format!("org.gnome.Ptyxis.Profile:{}", profile("aa11"))], json!({"label": "Work", "opacity": 0.9}));
+    assert!(s.keys().all(|k| !k.contains("cc33") && !k.contains("bb22")), "{doc}");
+    assert_eq!(s["org.gnome.Ptyxis"]["profile-uuids"], json!(["aa11", "bb22"]));
+
+    let target = TestEnv::new();
+    let file = write_json(&target, "ptyxis.json", &doc);
+    target.gsap(&["apply", &file]).ok();
+    let got = target.gsap(&["get", "org.gnome.Ptyxis.Profile", "label", "--path", &profile("aa11")]).ok();
+    assert_eq!(got["value"], "Work");
+}
+
+#[test]
 fn apply_validates_everything_before_writing() {
     let env = TestEnv::new();
     let doc = json!({

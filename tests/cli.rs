@@ -376,6 +376,21 @@ fn changed_lists_only_customised_keys() {
     assert_eq!(only["changed"][0]["schema"], "org.gnome.desktop.screensaver");
 }
 
+#[test]
+fn changed_includes_listed_relocatable_instances() {
+    let env = TestEnv::new();
+    let custom = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding";
+    let path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/";
+    env.gsap(&["keys", "add", "Terminal", "<Super>Return", "ptyxis"]).ok();
+    // Unlisted instances can't be found, so they're left out.
+    env.gsap(&["set", "org.gnome.Ptyxis.Profile", "label", "Stale", "--path", "/org/gnome/Ptyxis/Profiles/x/"]).ok();
+
+    let out = env.gsap(&["changed", "--schema", custom]).ok();
+    assert_eq!(out["count"], 3, "{out}");
+    assert!(out["changed"].as_array().unwrap().iter().all(|c| c["path"] == path));
+    assert_eq!(env.gsap(&["changed", "--schema", "org.gnome.Ptyxis"]).ok()["count"], 0);
+}
+
 // --- conventions ------------------------------------------------------------
 
 #[test]
