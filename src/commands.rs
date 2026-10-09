@@ -13,7 +13,7 @@ use crate::search::{self, Doc};
 
 /// `range` of a key: enum choices, flags, or min/max; `null` when any value of
 /// the type is allowed.
-fn range_json(key: &SettingsSchemaKey) -> Value {
+pub(crate) fn range_json(key: &SettingsSchemaKey) -> Value {
     let range = key.range();
     let kind = range.child_value(0).str().unwrap_or_default().to_string();
     let detail = range.child_value(1).as_variant().unwrap();
@@ -147,7 +147,7 @@ pub fn get(index: &Index, schema: &str, key: &str, path: Option<&str>) -> Result
 }
 
 /// Why `value` is not allowed by the key's range, if it isn't.
-fn range_error(key: &SettingsSchemaKey, value: &glib::Variant) -> Option<String> {
+pub(crate) fn range_error(key: &SettingsSchemaKey, value: &glib::Variant) -> Option<String> {
     if key.range_check(value) {
         return None;
     }
@@ -195,24 +195,33 @@ pub fn set(index: &Index, schema: &str, key: &str, raw: &str, opts: &WriteOpts) 
     if let Some(msg) = range_error(&k, &new) {
         return Err(invalid(msg));
     }
-    write(entry, key, opts, "set", Action::Set(new), None)
+    write(entry, key, opts, "set", Action::Set(new), Tags::default())
 }
 
 pub fn reset(index: &Index, schema: &str, key: &str, opts: &WriteOpts) -> Result<Value> {
     let entry = index.get(schema)?;
     entry.key(key)?;
-    write(entry, key, opts, "reset", Action::Reset, None)
+    write(entry, key, opts, "reset", Action::Reset, Tags::default())
 }
 
-enum Action {
+pub(crate) enum Action {
     Set(glib::Variant),
     Reset,
 }
 
+/// Extra journal fields.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct Tags<'a> {
+    /// The journal id a revert undoes.
+    pub reverts: Option<&'a str>,
+    /// Groups the entries of one `apply` or batch revert.
+    pub batch: Option<&'a str>,
+}
+
 /// Validate-free core of every write: writability, guard, dry-run, the write
 /// itself, read-back verification and the journal. `op` labels the journal
-/// entry; `reverts` is the journal id a revert undoes.
-fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action: Action, reverts: Option<&str>) -> Result<Value> {
+/// entry.
+pub(crate) fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action: Action, tags: Tags) -> Result<Value> {
     let schema = entry.id();
     let settings = entry.settings(opts.path)?;
     let is_reset = matches!(action, Action::Reset);
@@ -273,7 +282,8 @@ fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action: Action, r
         old: &old,
         old_user_value: old_user.as_ref(),
         new: &now,
-        reverts,
+        reverts: tags.reverts,
+        batch: tags.batch,
     };
     match journal::record(&change) {
         Ok(id) => out["journal_id"] = id.into(),
@@ -306,13 +316,69 @@ pub fn history(limit: usize, prefixes: &[String], key: Option<&str>) -> Result<V
     Ok(json!({ "journal": journal::path(), "total": total, "entries": shown }))
 }
 
-/// Undo journal entry `id` (or `last`): set the key back to its previous
-/// value, or reset it if it was at its default. Refuses if the key has changed
-/// since, unless `force`.
+/// Undo journal entry `id`, every entry of batch `id` (an `apply`), or `last`
+/// (the newest entry, or its whole batch if it has one). Each key goes back to
+/// its previous value, or is reset if it was at its default. Refuses if a key
+/// has changed since, unless `force`; for a batch, every key is checked before
+/// any is written.
 pub fn revert(index: &Index, id: &str, force: bool, dry_run: bool, yes: bool) -> Result<Value> {
     let entries = read_journal()?;
-    let found = if id == "last" { entries.last() } else { entries.iter().find(|e| e["id"] == id) };
-    let e = found.ok_or_else(|| Error::EntryNotFound(id.to_string()))?;
+    let batch_of = |e: &Value| e["batch"].as_str().map(str::to_string);
+    let target: Vec<&Value> = match id {
+        "last" => match entries.last() {
+            Some(e) => match batch_of(e) {
+                Some(b) => entries.iter().filter(|x| x["batch"] == b.as_str()).collect(),
+                None => vec![e],
+            },
+            None => vec![],
+        },
+        _ => match entries.iter().find(|e| e["id"] == id) {
+            Some(e) => vec![e],
+            None => entries.iter().filter(|e| e["batch"] == id).collect(),
+        },
+    };
+    if target.is_empty() {
+        return Err(Error::EntryNotFound(id.to_string()));
+    }
+    let batch = match target.as_slice() {
+        [single] if single["batch"].is_null() || id == single["id"] => None,
+        _ => batch_of(target[0]),
+    };
+
+    // Undo in reverse order, after checking every entry.
+    let prepared = target.iter().rev().map(|e| prepare_revert(index, e, force)).collect::<Result<Vec<_>>>()?;
+    if !dry_run && !yes {
+        for p in &prepared {
+            if let Some(reason) = guard::check(&p.entry.id(), &p.key) {
+                return Err(Error::Guarded { schema: p.entry.id(), key: p.key.clone(), reason: reason.to_string() });
+            }
+        }
+    }
+
+    let run_batch = batch.as_ref().map(|b| format!("revert-{b}"));
+    let mut results = Vec::new();
+    for p in prepared {
+        let opts = WriteOpts { path: p.path.as_deref(), dry_run, yes };
+        let tags = Tags { reverts: Some(&p.id), batch: run_batch.as_deref() };
+        let mut out = write(p.entry, &p.key, &opts, "revert", p.action, tags)?;
+        out["reverts"] = p.id.clone().into();
+        results.push(out);
+    }
+    match batch {
+        None => Ok(results.pop().unwrap()),
+        Some(b) => Ok(json!({ "reverts_batch": b, "batch": run_batch, "dry_run": dry_run, "results": results })),
+    }
+}
+
+struct PreparedRevert<'a> {
+    entry: &'a Entry,
+    key: String,
+    path: Option<String>,
+    action: Action,
+    id: String,
+}
+
+fn prepare_revert<'a>(index: &'a Index, e: &Value, force: bool) -> Result<PreparedRevert<'a>> {
     let id = e["id"].as_str().unwrap_or_default();
     let field =
         |name: &str| e[name].as_str().ok_or_else(|| Error::Internal(format!("journal entry {id} has no {name}")));
@@ -354,10 +420,7 @@ pub fn revert(index: &Index, id: &str, force: bool, dry_run: bool, yes: bool) ->
             Action::Set(v)
         }
     };
-    let opts = WriteOpts { path, dry_run, yes };
-    let mut out = write(entry, key, &opts, "revert", action, Some(id))?;
-    out["reverts"] = id.into();
-    Ok(out)
+    Ok(PreparedRevert { entry, key: key.to_string(), path: path.map(str::to_string), action, id: id.to_string() })
 }
 
 fn read_journal() -> Result<Vec<Value>> {
@@ -392,7 +455,7 @@ pub fn changed(index: &Index, prefixes: &[String]) -> Result<Value> {
 
 /// `prefixes` empty, or `id` equals one of them or sits below it (`org.gnome.desktop`
 /// matches `org.gnome.desktop.interface`).
-fn matches_prefix(id: &str, prefixes: &[String]) -> bool {
+pub(crate) fn matches_prefix(id: &str, prefixes: &[String]) -> bool {
     prefixes.is_empty()
         || prefixes.iter().any(|p| id == p || id.strip_prefix(p.as_str()).is_some_and(|rest| rest.starts_with('.')))
 }

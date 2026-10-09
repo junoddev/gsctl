@@ -53,9 +53,30 @@ All output is JSON on stdout. Errors are JSON on stderr with a `code`, a
 
        gsap get org.gnome.desktop.interface color-scheme
 
-6. **Record** it. Once `gsap export` exists, export the area into the setup
-   repo and commit. Until then, note the `schema key value` triple in the
-   setup repo's notes.
+6. **Record** it in the setup repo: export the area and commit the file.
+
+       gsap areas                                   # which area owns what
+       gsap export --area interface --out <repo>/gnome/
+       git -C <repo> diff                           # review, then commit
+
+## State files: export and apply
+
+`gsap export` writes only customised keys, one JSON file per area
+(`extensions`, `keybindings`, `interface`, `shell`, `input`, `power`,
+`remote`, `a11y`, `other`), sorted for clean diffs. Custom keybindings are
+included as `schema:/path/` entries. App state (counters, timestamps,
+`migrated` flags, window geometry, TLS paths) is skipped and listed under
+`skipped_state`; don't add it back by hand.
+
+    gsap apply <repo>/gnome/*.json --dry-run     # review "changes" and "requires_yes"
+    gsap apply <repo>/gnome/*.json               # add --yes only after the user agrees to guarded keys
+    gsap revert last                             # undoes the whole apply
+
+`apply` validates every value first and writes nothing if anything is wrong
+(error `batch_invalid` with a `problems` list). It only writes keys that
+differ, so running it twice is safe. It does not reset keys missing from the
+file. Edit state files with real values from `gsap schema`; a value shown as
+`{"$gvariant": "..."}` is typed GVariant text and should be kept as is.
 
 ## Undo
 

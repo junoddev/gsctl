@@ -107,6 +107,10 @@
       <default>0</default>
       <summary>Unsigned 16-bit</summary>
     </key>
+    <key name="launch-count" type="u">
+      <default>0</default>
+      <summary>How often the app was launched (app state, not a preference)</summary>
+    </key>
     <key name="locked-s" type="s">
       <default>'free'</default>
       <summary>Locked by the test admin database</summary>
@@ -133,6 +137,32 @@
     <key name="lock-delay" type="u">
       <default>0</default>
       <summary>Time before session lock</summary>
+    </key>
+  </schema>
+
+  <!-- Stand-ins for the media-keys schemas, for custom keybinding export/apply. -->
+  <schema id="org.gnome.settings-daemon.plugins.media-keys" path="/org/gnome/settings-daemon/plugins/media-keys/">
+    <key name="custom-keybindings" type="as">
+      <default>[]</default>
+      <summary>Custom keybindings</summary>
+    </key>
+    <key name="screensaver" type="as">
+      <default>['&lt;Super&gt;l']</default>
+      <summary>Lock screen</summary>
+    </key>
+  </schema>
+  <schema id="org.gnome.settings-daemon.plugins.media-keys.custom-keybinding">
+    <key name="name" type="s">
+      <default>''</default>
+      <summary>Name</summary>
+    </key>
+    <key name="command" type="s">
+      <default>''</default>
+      <summary>Command</summary>
+    </key>
+    <key name="binding" type="s">
+      <default>''</default>
+      <summary>Binding</summary>
     </key>
   </schema>
 </schemalist>

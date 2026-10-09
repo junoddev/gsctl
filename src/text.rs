@@ -95,6 +95,25 @@ pub fn render(command: &str, out: &Value) -> String {
                 ));
             }
         }
+        "apply" => {
+            let what = if out["dry_run"] == true { "would change" } else { "changed" };
+            for c in out["changes"].as_array().into_iter().flatten() {
+                line(format!(
+                    "{} {} {what}: {} -> {}",
+                    s(&c["schema"]),
+                    s(&c["key"]),
+                    compact(&c["old"]),
+                    compact(&c["new"])
+                ));
+            }
+            let n = out["changes"].as_array().map_or(0, Vec::len);
+            line(format!("({n} {what}, {} unchanged)", out["unchanged"]));
+        }
+        "areas" => {
+            for a in out["areas"].as_array().into_iter().flatten() {
+                line(format!("{:<12} {}", s(&a["name"]), s(&a["description"])));
+            }
+        }
         _ => line(serde_json::to_string_pretty(out).unwrap()),
     }
     text

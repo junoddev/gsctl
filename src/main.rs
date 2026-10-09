@@ -1,9 +1,11 @@
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use gsap::commands::{self, WriteOpts};
 use gsap::error::{Error, Result};
 use gsap::index::Index;
+use gsap::state::{self, ApplyOpts, ExportOpts};
 use serde_json::Value;
 
 /// A discoverable, validated JSON interface to GNOME settings (GSettings/dconf).
@@ -94,7 +96,40 @@ enum Command {
         #[arg(long)]
         yes: bool,
     },
-    /// List recorded changes (set, reset, revert), newest first.
+    /// Export customised settings as JSON state files, one per area. Prints a
+    /// single document, or writes <area>.json files with --out. Machine state
+    /// (counters, timestamps, migration markers) is skipped unless
+    /// --include-state.
+    Export {
+        /// Only these areas (repeatable); see `gsap areas`.
+        #[arg(long)]
+        area: Vec<String>,
+        /// Write one <area>.json per area into this directory.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Also export keys that look like machine or app state.
+        #[arg(long)]
+        include_state: bool,
+    },
+    /// Apply state files from `export`. Validates every value first and writes
+    /// nothing if any is invalid; only keys that differ are written, as one
+    /// journal batch (`gsap revert <batch>` undoes it).
+    Apply {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        /// Only keys in these areas (repeatable).
+        #[arg(long)]
+        area: Vec<String>,
+        /// Show what would change without writing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Confirm changes to guarded keys.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// List the export areas and the schemas each covers.
+    Areas,
+    /// List recorded changes (set, reset, revert, apply), newest first.
     History {
         /// Maximum number of entries.
         #[arg(long, default_value_t = 20)]
@@ -107,7 +142,8 @@ enum Command {
         key: Option<String>,
     },
     /// Undo a recorded change: restore the previous value, or reset the key if
-    /// it was at its default. ID is from `gsap history`, or `last`.
+    /// it was at its default. ID is an entry or batch id from `gsap history`,
+    /// or `last` (the newest entry, or its whole batch).
     Revert {
         id: String,
         /// Revert even if the key has changed since the entry.
@@ -145,6 +181,15 @@ fn run(cli: &Cli) -> Result<Value> {
             commands::reset(&index, schema, key, &opts)
         }
         Command::Changed { schema } => commands::changed(&index, schema),
+        Command::Export { area, out, include_state } => {
+            let opts = ExportOpts { areas: area, out_dir: out.as_deref(), include_state: *include_state };
+            state::export(&index, &opts)
+        }
+        Command::Apply { files, area, dry_run, yes } => {
+            let opts = ApplyOpts { files, areas: area, dry_run: *dry_run, yes: *yes };
+            state::apply(&index, &opts)
+        }
+        Command::Areas => Ok(state::areas()),
         Command::History { limit, schema, key } => commands::history(*limit, schema, key.as_deref()),
         Command::Revert { id, force, dry_run, yes } => commands::revert(&index, id, *force, *dry_run, *yes),
     }
@@ -158,6 +203,9 @@ fn command_name(c: &Command) -> &'static str {
         Command::Set { .. } => "set",
         Command::Reset { .. } => "reset",
         Command::Changed { .. } => "changed",
+        Command::Export { .. } => "export",
+        Command::Apply { .. } => "apply",
+        Command::Areas => "areas",
         Command::History { .. } => "history",
         Command::Revert { .. } => "revert",
     }

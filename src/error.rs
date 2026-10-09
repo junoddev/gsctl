@@ -20,6 +20,9 @@ pub enum Error {
     EntryNotFound(String),
     #[error("{message}")]
     Conflict { id: String, message: String },
+    /// Several problems at once (from `apply`); `exit` is the first problem's.
+    #[error("{message}")]
+    Batch { message: String, exit: i32, problems: Value },
     #[error("{0}")]
     Internal(String),
 }
@@ -36,6 +39,7 @@ impl Error {
             Error::NotWritable { .. } => 5,
             Error::Guarded { .. } => 6,
             Error::Conflict { .. } => 7,
+            Error::Batch { exit, .. } => *exit,
         }
     }
 
@@ -50,6 +54,7 @@ impl Error {
             Error::Guarded { .. } => "guarded",
             Error::EntryNotFound(_) => "entry_not_found",
             Error::Conflict { .. } => "conflict",
+            Error::Batch { .. } => "batch_invalid",
         }
     }
 
@@ -71,6 +76,7 @@ impl Error {
             Error::Guarded { schema, key, reason } => json!({ "schema": schema, "key": key, "reason": reason }),
             Error::EntryNotFound(id) => json!({ "id": id, "hint": "see `gsap history`" }),
             Error::Conflict { id, .. } => json!({ "id": id }),
+            Error::Batch { problems, .. } => json!({ "problems": problems }),
             Error::Usage(_) | Error::Internal(_) => Value::Null,
         };
         if let (Value::Object(err), Value::Object(extra)) = (&mut err, extra) {

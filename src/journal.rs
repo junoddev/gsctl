@@ -5,6 +5,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
@@ -30,12 +31,27 @@ pub struct Change<'a> {
     pub new: &'a glib::Variant,
     /// For a revert, the id of the entry it undoes.
     pub reverts: Option<&'a str>,
+    /// Groups the entries of one `apply` (or batch revert).
+    pub batch: Option<&'a str>,
+}
+
+static SEQ: AtomicU32 = AtomicU32::new(0);
+
+/// A new unique id: `<unix ms>-<pid>-<n>`, with `prefix-` in front if given.
+pub fn new_id(prefix: Option<&str>) -> String {
+    let ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
+    let n = SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+    let id = format!("{ms}-{}-{n}", std::process::id());
+    match prefix {
+        Some(p) => format!("{p}-{id}"),
+        None => id,
+    }
 }
 
 /// Append `change` and return its entry id.
 pub fn record(change: &Change) -> std::io::Result<String> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-    let id = format!("{}-{}", now.as_millis(), std::process::id());
+    let id = new_id(None);
     let mut entry = json!({
         "id": id,
         "time": rfc3339(now.as_secs()),
@@ -51,6 +67,9 @@ pub fn record(change: &Change) -> std::io::Result<String> {
     });
     if let Some(r) = change.reverts {
         entry["reverts"] = r.into();
+    }
+    if let Some(b) = change.batch {
+        entry["batch"] = b.into();
     }
     append(&entry)?;
     Ok(id)

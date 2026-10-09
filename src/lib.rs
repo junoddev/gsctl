@@ -7,4 +7,5 @@ pub mod guard;
 pub mod index;
 pub mod journal;
 pub mod search;
+pub mod state;
 pub mod text;
