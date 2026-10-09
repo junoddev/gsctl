@@ -57,7 +57,7 @@ fn writes_land_in_the_temp_dconf_database() {
     let env = TestEnv::new();
     assert!(!env.user_db().exists());
 
-    env.gsap(&["set", "org.gsap.test", "name-s", "Isolated"]).ok();
+    env.gsctl(&["set", "org.gsctl.test", "name-s", "Isolated"]).ok();
 
     // dconf-service on the private bus created the temp database...
     let db = std::fs::read(env.user_db()).expect("temp dconf database exists");
@@ -65,16 +65,16 @@ fn writes_land_in_the_temp_dconf_database() {
 
     // ...and a fresh D-Bus session reads it back, so this is the real dconf
     // backend persisting to disk, not GSettings' in-memory fallback.
-    let got = env.gsap(&["get", "org.gsap.test", "name-s"]).ok();
+    let got = env.gsctl(&["get", "org.gsctl.test", "name-s"]).ok();
     assert_eq!(got["value"], "Isolated");
 }
 
 #[test]
 fn only_test_schemas_are_visible() {
     let env = TestEnv::new();
-    let list = env.gsap(&["schema"]).ok();
+    let list = env.gsctl(&["schema"]).ok();
     let ids: Vec<&str> = list["schemas"].as_array().unwrap().iter().map(|s| s["id"].as_str().unwrap()).collect();
-    assert!(ids.contains(&"org.gsap.test"));
-    assert!(ids.contains(&"org.gnome.shell.extensions.gsap-demo"));
+    assert!(ids.contains(&"org.gsctl.test"));
+    assert!(ids.contains(&"org.gnome.shell.extensions.gsctl-demo"));
     assert!(!ids.contains(&"org.gnome.desktop.interface"), "real system schemas leaked in: {ids:?}");
 }

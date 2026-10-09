@@ -1,4 +1,4 @@
-//! `gsap watch`: the watcher and the writers share one private D-Bus session.
+//! `gsctl watch`: the watcher and the writers share one private D-Bus session.
 
 mod common;
 
@@ -10,13 +10,13 @@ use serde_json::Value;
 fn watch_while(env: &TestEnv, args: &str, then: &[&str]) -> Vec<Value> {
     let mut script = format!(
         r#"set -e
-"$GSAP" watch {args} > "$TMP/watch.out" &
+"$GSCTL" watch {args} > "$TMP/watch.out" &
 pid=$!
 for i in $(seq 200); do grep -q '"ready"' "$TMP/watch.out" 2>/dev/null && break; sleep 0.05; done
 "#
     );
     for cmd in then {
-        script.push_str(&format!("\"$GSAP\" {cmd} > /dev/null\n"));
+        script.push_str(&format!("\"$GSCTL\" {cmd} > /dev/null\n"));
     }
     script.push_str("wait $pid\n");
     let run = env.session_script(&script);
@@ -34,7 +34,7 @@ fn streams_changes_as_schema_and_key() {
     let events = watch_while(
         &env,
         "--count 2 --timeout 20",
-        &["set org.gsap.test count-i 11", "set org.gnome.desktop.screensaver lock-delay 7"],
+        &["set org.gsctl.test count-i 11", "set org.gnome.desktop.screensaver lock-delay 7"],
     );
     assert_eq!(events[0]["event"], "ready");
     assert!(events[0]["schemas"].as_u64().unwrap() > 3);
@@ -43,7 +43,7 @@ fn streams_changes_as_schema_and_key() {
     assert_eq!(
         changes,
         [
-            ("org.gsap.test", "count-i", &Value::from(11)),
+            ("org.gsctl.test", "count-i", &Value::from(11)),
             ("org.gnome.desktop.screensaver", "lock-delay", &Value::from(7))
         ]
     );
@@ -57,7 +57,7 @@ fn schema_filter() {
     let events = watch_while(
         &env,
         "--schema org.gnome.desktop --count 1 --timeout 20",
-        &["set org.gsap.test count-i 11", "set org.gnome.desktop.screensaver lock-delay 7"],
+        &["set org.gsctl.test count-i 11", "set org.gnome.desktop.screensaver lock-delay 7"],
     );
     assert_eq!(events.len(), 2);
     assert_eq!(events[1]["key"], "lock-delay");
@@ -66,7 +66,7 @@ fn schema_filter() {
 #[test]
 fn reports_resets_and_custom_keybindings() {
     let env = TestEnv::new();
-    env.gsap(&["keys", "add", "Terminal", "<Super>Return", "ptyxis"]).ok();
+    env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis"]).ok();
     let events = watch_while(
         &env,
         "--count 1 --timeout 20 --schema org.gnome.settings-daemon.plugins.media-keys.custom-keybinding",
@@ -78,8 +78,8 @@ fn reports_resets_and_custom_keybindings() {
     assert_eq!(events[1]["value"], "<Super>t");
 
     let env = TestEnv::new();
-    env.gsap(&["set", "org.gsap.test", "name-s", "X"]).ok();
-    let events = watch_while(&env, "--count 1 --timeout 20", &["reset org.gsap.test name-s"]);
+    env.gsctl(&["set", "org.gsctl.test", "name-s", "X"]).ok();
+    let events = watch_while(&env, "--count 1 --timeout 20", &["reset org.gsctl.test name-s"]);
     assert_eq!(events[1]["value"], "Adwaita");
     assert_eq!(events[1]["is_default"], true);
 }

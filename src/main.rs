@@ -2,27 +2,27 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use gsap::commands::{self, WriteOpts};
-use gsap::doctor;
-use gsap::error::{Error, Result};
-use gsap::ext;
-use gsap::index::Index;
-use gsap::keys::{self, AddOpts};
-use gsap::state::{self, ApplyOpts, ExportOpts};
-use gsap::watch::{self, WatchOpts};
+use gsctl::commands::{self, WriteOpts};
+use gsctl::doctor;
+use gsctl::error::{Error, Result};
+use gsctl::ext;
+use gsctl::index::Index;
+use gsctl::keys::{self, AddOpts};
+use gsctl::state::{self, ApplyOpts, ExportOpts};
+use gsctl::watch::{self, WatchOpts};
 use serde_json::Value;
 
 /// A discoverable, validated JSON interface to GNOME settings (GSettings/dconf).
 ///
-/// Typical loop: `gsap search <words>` → `gsap schema <schema> <key>` →
-/// `gsap set <schema> <key> <value> --dry-run` → `gsap set ...` → `gsap get ...`.
+/// Typical loop: `gsctl search <words>` → `gsctl schema <schema> <key>` →
+/// `gsctl set <schema> <key> <value> --dry-run` → `gsctl set ...` → `gsctl get ...`.
 ///
 /// Output is JSON on stdout; errors are JSON on stderr. Exit codes: 0 ok,
 /// 1 internal error, 2 usage, 3 schema or key not found, 4 invalid value,
 /// 5 not writable, 6 guarded key (needs --yes), 7 conflict (revert of a key
 /// changed since; needs --force).
 #[derive(Parser)]
-#[command(name = "gsap", version, max_term_width = 100)]
+#[command(name = "gsctl", version, max_term_width = 100)]
 struct Cli {
     /// Output format.
     #[arg(long, global = true, value_enum, default_value_t = Format::Json)]
@@ -105,7 +105,7 @@ enum Command {
     /// (counters, timestamps, migration markers) is skipped unless
     /// --include-state.
     Export {
-        /// Only these areas (repeatable); see `gsap areas`.
+        /// Only these areas (repeatable); see `gsctl areas`.
         #[arg(long)]
         area: Vec<String>,
         /// Write one <area>.json per area into this directory.
@@ -117,7 +117,7 @@ enum Command {
     },
     /// Apply state files from `export`. Validates every value first and writes
     /// nothing if any is invalid; only keys that differ are written, as one
-    /// journal batch (`gsap revert <batch>` undoes it).
+    /// journal batch (`gsctl revert <batch>` undoes it).
     Apply {
         #[arg(required = true)]
         files: Vec<PathBuf>,
@@ -150,7 +150,7 @@ enum Command {
         #[arg(long)]
         timeout: Option<u64>,
     },
-    /// Check that gsap can see and change this session's real settings
+    /// Check that gsctl can see and change this session's real settings
     /// (session bus, dconf, sandboxing). Run it first in a new environment.
     Doctor,
     /// List the export areas and the schemas each covers.
@@ -174,7 +174,7 @@ enum Command {
         key: Option<String>,
     },
     /// Undo a recorded change: restore the previous value, or reset the key if
-    /// it was at its default. ID is an entry or batch id from `gsap history`,
+    /// it was at its default. ID is an entry or batch id from `gsctl history`,
     /// or `last` (the newest entry, or its whole batch).
     Revert {
         id: String,
@@ -242,7 +242,7 @@ enum KeysCommand {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Remove a custom keybinding, by name, path or `customN`. `gsap revert
+    /// Remove a custom keybinding, by name, path or `customN`. `gsctl revert
     /// last` brings it back.
     Remove {
         binding: String,
@@ -356,7 +356,7 @@ fn main() -> ExitCode {
         Ok(Some(out)) => {
             match cli.format {
                 Format::Json => println!("{}", serde_json::to_string_pretty(&out).unwrap()),
-                Format::Text => print!("{}", gsap::text::render(command_name(&cli.command), &out)),
+                Format::Text => print!("{}", gsctl::text::render(command_name(&cli.command), &out)),
             }
             ExitCode::SUCCESS
         }

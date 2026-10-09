@@ -188,7 +188,7 @@ pub fn set(index: &Index, schema: &str, key: &str, raw: &str, opts: &WriteOpts) 
             "type": ty.as_str(),
             "type_description": describe(&ty),
             "range": range_json(&k),
-            "hint": format!("see `gsap schema {schema} {key}`; values are JSON (true, 42, \"text\", [\"a\",\"b\"]) or GVariant text"),
+            "hint": format!("see `gsctl schema {schema} {key}`; values are JSON (true, 42, \"text\", [\"a\",\"b\"]) or GVariant text"),
         }),
     };
     let new = convert::parse_input(raw, &ty).map_err(invalid)?;

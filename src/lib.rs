@@ -1,4 +1,4 @@
-//! gsap: a discoverable, validated JSON interface to GNOME settings.
+//! gsctl: a discoverable, validated JSON interface to GNOME settings.
 
 pub mod commands;
 pub mod convert;

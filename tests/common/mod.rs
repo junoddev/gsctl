@@ -1,4 +1,4 @@
-//! Hermetic test environment for running the `gsap` binary.
+//! Hermetic test environment for running the `gsctl` binary.
 //!
 //! Every invocation runs under its own `dbus-run-session` with a cleared
 //! environment. HOME, every XDG directory, the dconf profile and the schema
@@ -32,8 +32,8 @@ use serde_json::Value;
 
 pub const DBUS_RUN_SESSION: &str = "/usr/bin/dbus-run-session";
 pub const DCONF_SERVICE_FILE: &str = "/usr/share/dbus-1/services/ca.desrt.dconf.service";
-pub const EXTENSION_UUID: &str = "demo@gsap.test";
-pub const SYSTEM_EXTENSION_UUID: &str = "system@gsap.test";
+pub const EXTENSION_UUID: &str = "demo@gsctl.test";
+pub const SYSTEM_EXTENSION_UUID: &str = "system@gsctl.test";
 
 pub struct TestEnv {
     tmp: tempfile::TempDir,
@@ -43,9 +43,9 @@ pub struct TestEnv {
 pub struct Run {
     pub status: i32,
     pub stdout: String,
-    /// gsap's own stderr.
+    /// gsctl's own stderr.
     pub stderr: String,
-    /// Messages from dbus-run-session and dbus-daemon, kept apart from gsap's
+    /// Messages from dbus-run-session and dbus-daemon, kept apart from gsctl's
     /// stderr so they can't corrupt its JSON errors.
     pub bus_log: String,
 }
@@ -94,7 +94,7 @@ impl Run {
 
 impl TestEnv {
     pub fn new() -> TestEnv {
-        let tmp = tempfile::Builder::new().prefix("gsap-test-").tempdir().expect("tempdir");
+        let tmp = tempfile::Builder::new().prefix("gsctl-test-").tempdir().expect("tempdir");
         let env = TestEnv { tmp, runs: Cell::new(0) };
         for dir in ["home", "config", "state", "data-home", "share/dbus-1/services"] {
             fs::create_dir_all(env.path(dir)).unwrap();
@@ -121,7 +121,7 @@ impl TestEnv {
             format!(r#"{{"uuid": "{SYSTEM_EXTENSION_UUID}", "name": "System Demo", "shell-version": ["50"]}}"#),
         )
         .unwrap();
-        fs::write(sys_ext.join("extension.js"), "const s = this.getSettings('org.gnome.shell.extensions.gsap-system');\nconst i = new Gio.Settings({schema_id: 'org.gsap.test'});\n").unwrap();
+        fs::write(sys_ext.join("extension.js"), "const s = this.getSettings('org.gnome.shell.extensions.gsctl-system');\nconst i = new Gio.Settings({schema_id: 'org.gsctl.test'});\n").unwrap();
         let modes = env.path("share/gnome-shell/modes");
         fs::create_dir_all(&modes).unwrap();
         fs::write(
@@ -179,15 +179,15 @@ impl TestEnv {
     }
 
     pub fn journal(&self) -> PathBuf {
-        self.path("state/gsap/journal.ndjson")
+        self.path("state/gsctl/journal.ndjson")
     }
 
-    /// Add a read-only admin database that locks `/org/gsap/test/locked-s`.
+    /// Add a read-only admin database that locks `/org/gsctl/test/locked-s`.
     pub fn lock_key(&self) {
         let keyfiles = self.path("admin-db.d");
         fs::create_dir_all(keyfiles.join("locks")).unwrap();
-        fs::write(keyfiles.join("00-test"), "[org/gsap/test]\nlocked-s='admin'\n").unwrap();
-        fs::write(keyfiles.join("locks/00-test"), "/org/gsap/test/locked-s\n").unwrap();
+        fs::write(keyfiles.join("00-test"), "[org/gsctl/test]\nlocked-s='admin'\n").unwrap();
+        fs::write(keyfiles.join("locks/00-test"), "/org/gsctl/test/locked-s\n").unwrap();
         let status = Command::new("/usr/bin/dconf")
             .arg("compile")
             .arg(self.path("admin.db"))
@@ -230,13 +230,13 @@ impl TestEnv {
         cmd
     }
 
-    /// Run a shell script inside one private D-Bus session (so several gsap
-    /// processes share a bus, e.g. `watch` plus `set`). `$GSAP` is the binary.
+    /// Run a shell script inside one private D-Bus session (so several gsctl
+    /// processes share a bus, e.g. `watch` plus `set`). `$GSCTL` is the binary.
     pub fn session_script(&self, script: &str) -> Run {
         let out = self
             .command("/bin/sh")
             .args(["-c", script])
-            .env("GSAP", env!("CARGO_BIN_EXE_gsap"))
+            .env("GSCTL", env!("CARGO_BIN_EXE_gsctl"))
             .env("TMP", self.path(""))
             .output()
             .expect("run script");
@@ -244,31 +244,31 @@ impl TestEnv {
         Run::from_output(out, stderr)
     }
 
-    /// Run gsap with the hermetic environment but no reachable session bus.
-    pub fn gsap_without_bus(&self, args: &[&str]) -> Run {
-        let cmd = self.command(env!("CARGO_BIN_EXE_gsap"));
-        let out = Command::new(env!("CARGO_BIN_EXE_gsap"))
+    /// Run gsctl with the hermetic environment but no reachable session bus.
+    pub fn gsctl_without_bus(&self, args: &[&str]) -> Run {
+        let cmd = self.command(env!("CARGO_BIN_EXE_gsctl"));
+        let out = Command::new(env!("CARGO_BIN_EXE_gsctl"))
             .args(args)
             .env_clear()
             .envs(cmd.get_envs().filter_map(|(k, v)| Some((k.to_owned(), v?.to_owned()))))
             .env("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={}", self.path("runtime/no-bus").display()))
             .output()
-            .expect("run gsap");
+            .expect("run gsctl");
         let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
         Run::from_output(out, stderr)
     }
 
-    pub fn gsap(&self, args: &[&str]) -> Run {
+    pub fn gsctl(&self, args: &[&str]) -> Run {
         let n = self.runs.get() + 1;
         self.runs.set(n);
         let stderr_file = self.path(&format!("stderr-{n}"));
         let out = self
             .command("/bin/sh")
-            .args(["-c", r#"exec "$@" 2>"$GSAP_TEST_STDERR""#, "sh", env!("CARGO_BIN_EXE_gsap")])
+            .args(["-c", r#"exec "$@" 2>"$GSCTL_TEST_STDERR""#, "sh", env!("CARGO_BIN_EXE_gsctl")])
             .args(args)
-            .env("GSAP_TEST_STDERR", &stderr_file)
+            .env("GSCTL_TEST_STDERR", &stderr_file)
             .output()
-            .expect("run gsap");
+            .expect("run gsctl");
         let stderr = fs::read_to_string(&stderr_file).unwrap_or_default();
         Run::from_output(out, stderr)
     }

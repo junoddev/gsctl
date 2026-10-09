@@ -4,7 +4,7 @@
 //!
 //! ```json
 //! {
-//!   "gsap": 1,
+//!   "gsctl": 1,
 //!   "area": "interface",
 //!   "settings": {
 //!     "org.gnome.desktop.interface": { "color-scheme": "prefer-dark" },
@@ -318,7 +318,7 @@ fn document<'a>(area: Value, items: impl Iterator<Item = &'a Item>) -> Value {
             (inst.to_string(), Value::Object(keys))
         })
         .collect();
-    json!({ "gsap": FORMAT_VERSION, "area": area, "settings": settings })
+    json!({ "gsctl": FORMAT_VERSION, "area": area, "settings": settings })
 }
 
 pub struct ApplyOpts<'a> {
@@ -356,8 +356,8 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
             fs::read_to_string(file).map_err(|e| Error::Usage(format!("cannot read {}: {e}", file.display())))?;
         let doc: Value = serde_json::from_str(&text)
             .map_err(|e| Error::Usage(format!("{} is not valid JSON: {e}", file.display())))?;
-        if doc["gsap"].as_u64() != Some(FORMAT_VERSION) {
-            return Err(Error::Usage(format!("{} is not a gsap v{FORMAT_VERSION} state file", file.display())));
+        if doc["gsctl"].as_u64() != Some(FORMAT_VERSION) {
+            return Err(Error::Usage(format!("{} is not a gsctl v{FORMAT_VERSION} state file", file.display())));
         }
         let Some(settings) = doc["settings"].as_object() else {
             return Err(Error::Usage(format!("{} has no \"settings\" object", file.display())));

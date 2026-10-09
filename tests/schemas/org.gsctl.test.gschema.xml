@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Test schemas for gsap. Compiled into a temp dir by tests/common/mod.rs. -->
+<!-- Test schemas for gsctl. Compiled into a temp dir by tests/common/mod.rs. -->
 <schemalist>
-  <enum id="org.gsap.test.Mode">
+  <enum id="org.gsctl.test.Mode">
     <value nick="off" value="0"/>
     <value nick="on" value="1"/>
     <value nick="auto" value="2"/>
   </enum>
-  <flags id="org.gsap.test.Opts">
+  <flags id="org.gsctl.test.Opts">
     <value nick="bold" value="1"/>
     <value nick="italic" value="2"/>
     <value nick="underline" value="4"/>
   </flags>
 
-  <schema id="org.gsap.test" path="/org/gsap/test/">
+  <schema id="org.gsctl.test" path="/org/gsctl/test/">
     <key name="flag-b" type="b">
       <default>false</default>
       <summary>Enable the frobnicator</summary>
@@ -63,11 +63,11 @@
       <default>[('xkb', 'us')]</default>
       <summary>Pairs list</summary>
     </key>
-    <key name="mode" enum="org.gsap.test.Mode">
+    <key name="mode" enum="org.gsctl.test.Mode">
       <default>'auto'</default>
       <summary>Operating mode</summary>
     </key>
-    <key name="opts" flags="org.gsap.test.Opts">
+    <key name="opts" flags="org.gsctl.test.Opts">
       <default>['bold']</default>
       <summary>Text style flags</summary>
     </key>
@@ -117,7 +117,7 @@
     </key>
   </schema>
 
-  <schema id="org.gsap.test.reloc">
+  <schema id="org.gsctl.test.reloc">
     <key name="name" type="s">
       <default>''</default>
       <summary>Binding name</summary>
@@ -140,15 +140,15 @@
     </key>
   </schema>
 
-  <!-- Installed system-wide for system@gsap.test, which names it only in its JS. -->
-  <schema id="org.gnome.shell.extensions.gsap-system" path="/org/gnome/shell/extensions/gsap-system/">
+  <!-- Installed system-wide for system@gsctl.test, which names it only in its JS. -->
+  <schema id="org.gnome.shell.extensions.gsctl-system" path="/org/gnome/shell/extensions/gsctl-system/">
     <key name="dock-side" type="s">
       <default>'left'</default>
       <summary>Dock side</summary>
     </key>
   </schema>
 
-  <!-- Stand-in for org.gnome.shell, for `gsap ext`. -->
+  <!-- Stand-in for org.gnome.shell, for `gsctl ext`. -->
   <schema id="org.gnome.shell" path="/org/gnome/shell/">
     <key name="enabled-extensions" type="as">
       <default>[]</default>
@@ -168,7 +168,7 @@
     </key>
   </schema>
 
-  <!-- Stand-ins for keybinding schemas, for `gsap keys`. -->
+  <!-- Stand-ins for keybinding schemas, for `gsctl keys`. -->
   <schema id="org.gnome.desktop.wm.keybindings" path="/org/gnome/desktop/wm/keybindings/">
     <key name="switch-applications" type="as">
       <default>['&lt;Super&gt;Tab', '&lt;Alt&gt;Tab']</default>

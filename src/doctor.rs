@@ -1,7 +1,7 @@
-//! `doctor`: can gsap see and change this session's real settings?
+//! `doctor`: can gsctl see and change this session's real settings?
 //!
 //! Agents often run sandboxed (no session bus, `~/.config/dconf` hidden).
-//! There gsap reads schema defaults and writes are dropped, so check first.
+//! There gsctl reads schema defaults and writes are dropped, so check first.
 
 use gio::prelude::*;
 use serde_json::{Value, json};
@@ -98,7 +98,7 @@ pub fn doctor(index: &Index) -> Result<Value> {
                 "session_bus",
                 "error",
                 e.message(),
-                Some("no session bus: writes are silently dropped by GSettings, so gsap refuses them (exit 5). Run inside the desktop session, not a sandbox"),
+                Some("no session bus: writes are silently dropped by GSettings, so gsctl refuses them (exit 5). Run inside the desktop session, not a sandbox"),
             ));
         }
         Ok(bus) => {

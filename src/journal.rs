@@ -1,5 +1,5 @@
-//! Append-only log of every change gsap makes, with the previous value, at
-//! `$XDG_STATE_HOME/gsap/journal.ndjson` (default `~/.local/state/...`).
+//! Append-only log of every change gsctl makes, with the previous value, at
+//! `$XDG_STATE_HOME/gsctl/journal.ndjson` (default `~/.local/state/...`).
 //! `history` and `revert` read it.
 
 use std::fs::{self, OpenOptions};
@@ -15,7 +15,7 @@ pub fn path() -> PathBuf {
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .unwrap_or_else(|| glib::home_dir().join(".local/state"));
-    state.join("gsap/journal.ndjson")
+    state.join("gsctl/journal.ndjson")
 }
 
 /// One recorded change. Values are stored both as JSON (for reading) and as

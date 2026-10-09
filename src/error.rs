@@ -14,7 +14,7 @@ pub enum Error {
     InvalidValue { message: String, details: Value },
     #[error("key is not writable (locked by the system administrator): {schema} {key}")]
     NotWritable { schema: String, key: String },
-    #[error("cannot write settings: {0}. Run gsap inside the desktop session, not a sandbox (see `gsap doctor`)")]
+    #[error("cannot write settings: {0}. Run gsctl inside the desktop session, not a sandbox (see `gsctl doctor`)")]
     NoSession(String),
     #[error("{schema} {key} is a guarded key: {reason}. Re-run with --yes to change it")]
     Guarded { schema: String, key: String, reason: String },
@@ -79,20 +79,20 @@ impl Error {
         });
         let extra = match self {
             Error::SchemaNotFound(schema) => {
-                json!({ "schema": schema, "hint": "try `gsap search <words>` or `gsap schema` to list schemas" })
+                json!({ "schema": schema, "hint": "try `gsctl search <words>` or `gsctl schema` to list schemas" })
             }
             Error::KeyNotFound { schema, key } => {
-                json!({ "schema": schema, "key": key, "hint": format!("try `gsap schema {schema}` to list its keys") })
+                json!({ "schema": schema, "key": key, "hint": format!("try `gsctl schema {schema}` to list its keys") })
             }
             Error::InvalidValue { details, .. } => details.clone(),
             Error::NotWritable { schema, key } => json!({ "schema": schema, "key": key }),
             Error::Guarded { schema, key, reason } => json!({ "schema": schema, "key": key, "reason": reason }),
-            Error::EntryNotFound(id) => json!({ "id": id, "hint": "see `gsap history`" }),
-            Error::ExtensionNotFound(uuid) => json!({ "uuid": uuid, "hint": "see `gsap ext list`" }),
-            Error::BindingNotFound(what) => json!({ "binding": what, "hint": "see `gsap keys list --custom`" }),
+            Error::EntryNotFound(id) => json!({ "id": id, "hint": "see `gsctl history`" }),
+            Error::ExtensionNotFound(uuid) => json!({ "uuid": uuid, "hint": "see `gsctl ext list`" }),
+            Error::BindingNotFound(what) => json!({ "binding": what, "hint": "see `gsctl keys list --custom`" }),
             Error::Conflict { id, .. } => json!({ "id": id }),
             Error::Batch { problems, .. } => json!({ "problems": problems }),
-            Error::NoSession(reason) => json!({ "reason": reason, "hint": "run `gsap doctor`" }),
+            Error::NoSession(reason) => json!({ "reason": reason, "hint": "run `gsctl doctor`" }),
             Error::Usage(_) | Error::Internal(_) => Value::Null,
         };
         if let (Value::Object(err), Value::Object(extra)) = (&mut err, extra) {

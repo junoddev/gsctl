@@ -1,10 +1,10 @@
-# gsap — gnome-settings-agent-proxy
+# gsctl — gnome-settings-agent-proxy
 
 A Rust CLI that gives AI agents a discoverable, validated, JSON interface to
 GNOME's settings (GSettings/dconf): search keys, inspect their types and allowed
 values, set them with validation and `--dry-run`, and keep a journal of changes.
 
-The command is `gsap`; the bundled agent skill is `gnome-settings`
+The command is `gsctl`; the bundled agent skill is `gnome-settings`
 (`skills/gnome-settings/SKILL.md`). See [NOTES.md](NOTES.md) for the problem,
 design, architecture and roadmap.
 

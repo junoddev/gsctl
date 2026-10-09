@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
-  <schema id="org.gnome.shell.extensions.gsap-demo" path="/org/gnome/shell/extensions/gsap-demo/">
+  <schema id="org.gnome.shell.extensions.gsctl-demo" path="/org/gnome/shell/extensions/gsctl-demo/">
     <key name="show-indicator" type="b">
       <default>true</default>
       <summary>Show the demo indicator</summary>
