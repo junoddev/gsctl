@@ -237,6 +237,14 @@ enum KeysCommand {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Remove a custom keybinding, by name, path or `customN`. `gsap revert
+    /// last` brings it back.
+    Remove {
+        binding: String,
+        /// Show the writes without making them.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 /// The JSON document to print, or `None` for streaming commands that print
@@ -285,6 +293,7 @@ fn run(cli: &Cli) -> Result<Option<Value>> {
                 let opts = AddOpts { name, accel, command, force: *force, dry_run: *dry_run };
                 keys::add(&index, &opts)
             }
+            KeysCommand::Remove { binding, dry_run } => keys::remove(&index, binding, *dry_run),
         },
         Command::History { limit, schema, key } => commands::history(*limit, schema, key.as_deref()),
         Command::Revert { id, force, dry_run, yes } => commands::revert(&index, id, *force, *dry_run, *yes),
@@ -312,6 +321,7 @@ fn command_name(c: &Command) -> &'static str {
         Command::Keys(KeysCommand::Find { .. }) | Command::Keys(KeysCommand::List { .. }) => "keys-list",
         Command::Keys(KeysCommand::Conflicts) => "keys-conflicts",
         Command::Keys(KeysCommand::Add { .. }) => "keys-add",
+        Command::Keys(KeysCommand::Remove { .. }) => "keys-remove",
         Command::History { .. } => "history",
         Command::Revert { .. } => "revert",
     }

@@ -98,6 +98,52 @@ fn add_refuses_taken_accelerators() {
 }
 
 #[test]
+fn remove_deletes_a_custom_binding_and_revert_brings_it_back() {
+    let env = TestEnv::new();
+    env.gsap(&["keys", "add", "Terminal", "<Super>Return", "ptyxis"]).ok();
+    env.gsap(&["keys", "add", "Files", "<Super>e", "nautilus"]).ok();
+
+    let dry = env.gsap(&["keys", "remove", "Terminal", "--dry-run"]).ok();
+    assert_eq!(dry["path"], CUSTOM0);
+    assert_eq!(env.gsap(&["keys", "list", "--custom"]).ok()["count"], 2);
+
+    let out = env.gsap(&["keys", "remove", "Terminal"]).ok();
+    assert_eq!(out["path"], CUSTOM0);
+    assert_eq!(out["accel"], "<Super>Return");
+    assert!(out["batch"].as_str().unwrap().starts_with("keys-remove-"));
+    assert_eq!(out["writes"].as_array().unwrap().len(), 4, "{out}");
+    assert_eq!(env.gsap(&["get", MEDIA_KEYS, "custom-keybindings"]).ok()["value"], json!([CUSTOM1]));
+    assert_eq!(env.gsap(&["get", CUSTOM, "name", "--path", CUSTOM0]).ok()["is_default"], true);
+    assert_eq!(env.gsap(&["keys", "find", "<Super>Return"]).ok()["free"], true);
+
+    env.gsap(&["revert", "last"]).ok();
+    let list = env.gsap(&["keys", "list", "--custom"]).ok();
+    assert_eq!(list["count"], 2, "{list}");
+    assert_eq!(env.gsap(&["get", MEDIA_KEYS, "custom-keybindings"]).ok()["value"], json!([CUSTOM0, CUSTOM1]));
+    assert_eq!(env.gsap(&["get", CUSTOM, "command", "--path", CUSTOM0]).ok()["value"], "ptyxis");
+
+    // By short path and full path too.
+    env.gsap(&["keys", "remove", "custom1"]).ok();
+    env.gsap(&["keys", "remove", CUSTOM0]).ok();
+    assert_eq!(env.gsap(&["keys", "list", "--custom"]).ok()["count"], 0);
+}
+
+#[test]
+fn remove_refuses_unknown_and_ambiguous_names() {
+    let env = TestEnv::new();
+    let r = env.gsap(&["keys", "remove", "Nope"]);
+    assert_eq!(r.status, 3, "{}", r.stderr);
+    assert_eq!(r.error()["error"]["code"], "binding_not_found");
+
+    env.gsap(&["keys", "add", "Same", "<Super>F1", "true"]).ok();
+    env.gsap(&["keys", "add", "Same", "<Super>F2", "true"]).ok();
+    let r = env.gsap(&["keys", "remove", "Same"]);
+    assert_eq!(r.status, 2, "{}", r.stderr);
+    assert!(r.error()["error"]["message"].as_str().unwrap().contains(CUSTOM1));
+    assert_eq!(env.gsap(&["keys", "list", "--custom"]).ok()["count"], 2);
+}
+
+#[test]
 fn revert_last_undoes_keys_add() {
     let env = TestEnv::new();
     env.gsap(&["keys", "add", "Terminal", "<Super>Return", "ptyxis"]).ok();

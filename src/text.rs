@@ -143,6 +143,16 @@ pub fn render(command: &str, out: &Value) -> String {
                 s(&out["command"])
             ));
         }
+        "keys-remove" => {
+            let what = if out["dry_run"] == true { "would remove" } else { "removed" };
+            line(format!(
+                "{what} {} at {}: {} runs {}",
+                s(&out["name"]),
+                s(&out["path"]),
+                s(&out["accel"]),
+                s(&out["command"])
+            ));
+        }
         "ext-list" => {
             for e in out["extensions"].as_array().into_iter().flatten() {
                 let on = if e["enabled"] == true { "on " } else { "off" };

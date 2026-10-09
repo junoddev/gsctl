@@ -267,6 +267,65 @@ pub fn add(index: &Index, opts: &AddOpts) -> Result<Value> {
     }))
 }
 
+/// Remove a custom keybinding, found by exact name, path, or `customN`:
+/// drop it from the list, then reset its keys, as one batch (so `revert
+/// last` brings it back).
+pub fn remove(index: &Index, which: &str, dry_run: bool) -> Result<Value> {
+    let media = index.get(MEDIA_KEYS)?;
+    let custom = index.get(CUSTOM_KEYBINDING_SCHEMA)?;
+    let existing = custom_paths(index);
+    let by_path: Vec<&String> =
+        existing.iter().filter(|p| *p == which || p.trim_end_matches('/').rsplit('/').next() == Some(which)).collect();
+    let matches = if by_path.is_empty() {
+        let mut named = Vec::new();
+        for p in &existing {
+            if custom.settings(Some(p)).is_ok_and(|s| s.string("name") == which) {
+                named.push(p);
+            }
+        }
+        named
+    } else {
+        by_path
+    };
+    let path = match matches.as_slice() {
+        [] => return Err(Error::BindingNotFound(which.to_string())),
+        [p] => (*p).clone(),
+        several => {
+            return Err(Error::Usage(format!(
+                "{} custom keybindings are named {which:?}; remove one by path: {}",
+                several.len(),
+                several.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(", ")
+            )));
+        }
+    };
+    let settings = custom.settings(Some(&path))?;
+    let name = settings.string("name").to_string();
+    let accel = settings.string("binding").to_string();
+    let command = settings.string("command").to_string();
+
+    let batch = journal::new_id(Some("keys-remove"));
+    let tags = Tags { reverts: None, batch: Some(&batch) };
+    let list: Vec<&String> = existing.iter().filter(|p| **p != path).collect();
+    let lopts = WriteOpts { path: None, dry_run, yes: false };
+    let mut writes = vec![write(media, CUSTOM_LIST_KEY, &lopts, "keys-remove", Action::Set(list.to_variant()), tags)?];
+    let wopts = WriteOpts { path: Some(&path), dry_run, yes: false };
+    for key in custom.keys() {
+        if settings.user_value(&key).is_some() {
+            writes.push(write(custom, &key, &wopts, "keys-remove", Action::Reset, tags)?);
+        }
+    }
+
+    Ok(json!({
+        "dry_run": dry_run,
+        "path": path,
+        "name": name,
+        "accel": accel,
+        "command": command,
+        "batch": if dry_run { Value::Null } else { batch.into() },
+        "writes": writes,
+    }))
+}
+
 /// Whether a relocatable instance already holds values (a stale binding not
 /// in the list), so a new binding doesn't inherit its leftovers.
 fn has_user_values(entry: &Entry, path: &str) -> bool {

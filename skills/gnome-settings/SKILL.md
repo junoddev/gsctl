@@ -144,10 +144,13 @@ those keys by hand:
     gsap keys list [--custom]
     gsap keys add Terminal '<Super>Return' ptyxis --dry-run
     gsap keys add Terminal '<Super>Return' ptyxis
+    gsap keys remove Terminal           # by name, path or customN
 
 `keys add` picks the next free `customN` slot and refuses an accelerator
 that's taken (exit 7). Free it first, or use `--force` only if the user
-wants both. `gsap revert last` removes the binding again. To change a
+wants both. `gsap revert last` removes the binding again. `keys remove`
+takes the binding off the list and resets its keys; a name shared by two
+bindings is refused (exit 2), so remove by path. `revert last` brings it back. To change a
 built-in shortcut, `gsap set org.gnome.desktop.wm.keybindings <key>
 '["<Super>x"]'` (these keys are string arrays; `[]` disables).
 
