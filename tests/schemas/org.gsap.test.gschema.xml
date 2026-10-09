@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Test schemas for gsap. Compiled into a temp dir by tests/common/mod.rs. -->
+<schemalist>
+  <enum id="org.gsap.test.Mode">
+    <value nick="off" value="0"/>
+    <value nick="on" value="1"/>
+    <value nick="auto" value="2"/>
+  </enum>
+  <flags id="org.gsap.test.Opts">
+    <value nick="bold" value="1"/>
+    <value nick="italic" value="2"/>
+    <value nick="underline" value="4"/>
+  </flags>
+
+  <schema id="org.gsap.test" path="/org/gsap/test/">
+    <key name="flag-b" type="b">
+      <default>false</default>
+      <summary>Enable the frobnicator</summary>
+      <description>When true, the frobnicator runs on every refresh.</description>
+    </key>
+    <key name="count-i" type="i">
+      <range min="0" max="100"/>
+      <default>10</default>
+      <summary>Number of widgets</summary>
+      <description>How many widgets to show in the zanzibar panel.</description>
+    </key>
+    <key name="size-u" type="u">
+      <default>300</default>
+      <summary>Idle delay</summary>
+      <description>Seconds of inactivity before the screen blanks.</description>
+    </key>
+    <key name="ratio-d" type="d">
+      <range min="0.5" max="3.0"/>
+      <default>1.0</default>
+      <summary>Text scaling factor</summary>
+    </key>
+    <key name="name-s" type="s">
+      <default>'Adwaita'</default>
+      <summary>Theme name</summary>
+    </key>
+    <key name="list-as" type="as">
+      <default>['one', 'two']</default>
+      <summary>Favourite apps</summary>
+      <description>Desktop file ids pinned to the quuxbar.</description>
+    </key>
+    <key name="dict-asv" type="a{sv}">
+      <default>{}</default>
+      <summary>Arbitrary options</summary>
+    </key>
+    <key name="dict-ass" type="a{ss}">
+      <default>{'a': 'b'}</default>
+      <summary>String map</summary>
+    </key>
+    <key name="pair-ii" type="(ii)">
+      <default>(0, 0)</default>
+      <summary>Window position</summary>
+    </key>
+    <key name="triple-sdb" type="(sdb)">
+      <default>('x', 1.5, true)</default>
+      <summary>Mixed tuple</summary>
+    </key>
+    <key name="sources-ass" type="a(ss)">
+      <default>[('xkb', 'us')]</default>
+      <summary>Pairs list</summary>
+    </key>
+    <key name="mode" enum="org.gsap.test.Mode">
+      <default>'auto'</default>
+      <summary>Operating mode</summary>
+    </key>
+    <key name="opts" flags="org.gsap.test.Opts">
+      <default>['bold']</default>
+      <summary>Text style flags</summary>
+    </key>
+    <key name="choice-s" type="s">
+      <choices>
+        <choice value="left"/>
+        <choice value="right"/>
+      </choices>
+      <default>'left'</default>
+      <summary>Dock side</summary>
+    </key>
+    <key name="maybe-s" type="ms">
+      <default>nothing</default>
+      <summary>Optional label</summary>
+    </key>
+    <key name="bytes-ay" type="ay">
+      <default>b''</default>
+      <summary>Raw bytes</summary>
+    </key>
+    <key name="big-x" type="x">
+      <default>0</default>
+      <summary>Signed 64-bit</summary>
+    </key>
+    <key name="big-t" type="t">
+      <default>0</default>
+      <summary>Unsigned 64-bit</summary>
+    </key>
+    <key name="byte-y" type="y">
+      <default>0</default>
+      <summary>Byte value</summary>
+    </key>
+    <key name="short-n" type="n">
+      <default>0</default>
+      <summary>Signed 16-bit</summary>
+    </key>
+    <key name="short-q" type="q">
+      <default>0</default>
+      <summary>Unsigned 16-bit</summary>
+    </key>
+    <key name="locked-s" type="s">
+      <default>'free'</default>
+      <summary>Locked by the test admin database</summary>
+    </key>
+  </schema>
+
+  <schema id="org.gsap.test.reloc">
+    <key name="name" type="s">
+      <default>''</default>
+      <summary>Binding name</summary>
+    </key>
+    <key name="binding" type="s">
+      <default>''</default>
+      <summary>Accelerator</summary>
+    </key>
+  </schema>
+
+  <!-- A stand-in for a real GNOME schema, so guarded-key tests run hermetically. -->
+  <schema id="org.gnome.desktop.screensaver" path="/org/gnome/desktop/screensaver/">
+    <key name="lock-enabled" type="b">
+      <default>true</default>
+      <summary>Lock screen after blank</summary>
+    </key>
+    <key name="lock-delay" type="u">
+      <default>0</default>
+      <summary>Time before session lock</summary>
+    </key>
+  </schema>
+</schemalist>

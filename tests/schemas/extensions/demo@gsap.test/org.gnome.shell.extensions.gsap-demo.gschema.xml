@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.gsap-demo" path="/org/gnome/shell/extensions/gsap-demo/">
+    <key name="show-indicator" type="b">
+      <default>true</default>
+      <summary>Show the demo indicator</summary>
+      <description>Whether the pelican indicator appears in the top bar.</description>
+    </key>
+  </schema>
+</schemalist>
