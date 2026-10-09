@@ -62,6 +62,19 @@ fn search_limit_and_schema_filter() {
     assert_eq!(none["total"], 0);
 }
 
+#[test]
+fn search_falls_back_to_partial_matches() {
+    let env = TestEnv::new();
+    let full = env.gsap(&["search", "frobnicator"]).ok();
+    assert_eq!(full["partial"], false);
+
+    // No key mentions "turbo", so the best partial matches come back, flagged.
+    let out = env.gsap(&["search", "frobnicator", "turbo"]).ok();
+    assert_eq!(out["partial"], true);
+    assert_eq!(out["results"][0]["key"], "flag-b");
+    assert_eq!(out["results"][0]["matched_words"], 1);
+}
+
 // --- schema -----------------------------------------------------------------
 
 #[test]
@@ -304,6 +317,18 @@ fn extension_keys_are_writable() {
     let ext = "org.gnome.shell.extensions.gsap-demo";
     env.gsap(&["set", ext, "show-indicator", "false"]).ok();
     assert_eq!(env.gsap(&["get", ext, "show-indicator"]).ok()["value"], false);
+}
+
+#[test]
+fn dropped_writes_are_errors() {
+    let env = TestEnv::new();
+    let r = env.gsap_without_bus(&["set", S, "name-s", "Lost"]);
+    assert_eq!(r.status, 1, "stdout:\n{}\nstderr:\n{}", r.stdout, r.stderr);
+    let err = r.stderr.lines().find(|l| l.starts_with('{')).expect("JSON error line");
+    let err: Value = serde_json::from_str(err).unwrap();
+    assert_eq!(err["error"]["code"], "internal");
+    assert!(err["error"]["message"].as_str().unwrap().contains("did not take effect"));
+    assert!(journal(&env).is_empty());
 }
 
 // --- changed ----------------------------------------------------------------

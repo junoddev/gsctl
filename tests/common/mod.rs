@@ -8,6 +8,10 @@
 //! - `env_clear()` drops the real `DBUS_SESSION_BUS_ADDRESS`; `dbus-run-session`
 //!   supplies a private bus, and `XDG_RUNTIME_DIR` (GLib's fallback bus
 //!   location) is a temp dir too.
+//! - The private bus uses its own config (`bus.conf`): it listens in the temp
+//!   runtime dir, only activates services from the temp service dir, ignores
+//!   `/etc/dbus-1`, and has AppArmor mediation off, which otherwise stops
+//!   `dbus-daemon` from starting inside sandboxes such as bubblewrap.
 //! - `dconf-service` is activated on that private bus and inherits the temp
 //!   `XDG_CONFIG_HOME`, so it writes `$tmp/config/dconf/user`.
 //! - `DCONF_PROFILE` points at a temp profile, so `/etc/dconf` is ignored.
@@ -19,6 +23,7 @@
 
 #![allow(dead_code)]
 
+use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -31,46 +36,65 @@ pub const EXTENSION_UUID: &str = "demo@gsap.test";
 
 pub struct TestEnv {
     tmp: tempfile::TempDir,
+    runs: Cell<u32>,
 }
 
 pub struct Run {
     pub status: i32,
     pub stdout: String,
+    /// gsap's own stderr.
     pub stderr: String,
+    /// Messages from dbus-run-session and dbus-daemon, kept apart from gsap's
+    /// stderr so they can't corrupt its JSON errors.
+    pub bus_log: String,
 }
 
 impl Run {
-    fn from_output(out: Output) -> Run {
+    fn from_output(out: Output, stderr: String) -> Run {
         Run {
             status: out.status.code().unwrap_or(-1),
             stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+            stderr,
+            bus_log: String::from_utf8_lossy(&out.stderr).into_owned(),
         }
     }
 
     /// Parse stdout as JSON, panicking with the full output on failure.
     pub fn json(&self) -> Value {
-        serde_json::from_str(&self.stdout)
-            .unwrap_or_else(|e| panic!("stdout is not JSON ({e}):\n{}\nstderr:\n{}", self.stdout, self.stderr))
+        serde_json::from_str(&self.stdout).unwrap_or_else(|e| {
+            panic!("stdout is not JSON ({e}):\n{}\nstderr:\n{}{}", self.stdout, self.stderr, self.log())
+        })
     }
 
     /// Parse stderr as a JSON error object.
     pub fn error(&self) -> Value {
-        serde_json::from_str(&self.stderr)
-            .unwrap_or_else(|e| panic!("stderr is not JSON ({e}):\n{}\nstdout:\n{}", self.stderr, self.stdout))
+        serde_json::from_str(&self.stderr).unwrap_or_else(|e| {
+            panic!("stderr is not JSON ({e}):\n{}\nstdout:\n{}{}", self.stderr, self.stdout, self.log())
+        })
     }
 
     /// Assert exit 0 and return stdout JSON.
     pub fn ok(&self) -> Value {
-        assert_eq!(self.status, 0, "expected success\nstdout:\n{}\nstderr:\n{}", self.stdout, self.stderr);
+        assert_eq!(
+            self.status,
+            0,
+            "expected success\nstdout:\n{}\nstderr:\n{}{}",
+            self.stdout,
+            self.stderr,
+            self.log()
+        );
         self.json()
+    }
+
+    fn log(&self) -> String {
+        if self.bus_log.is_empty() { String::new() } else { format!("\nbus log:\n{}", self.bus_log) }
     }
 }
 
 impl TestEnv {
     pub fn new() -> TestEnv {
         let tmp = tempfile::Builder::new().prefix("gsap-test-").tempdir().expect("tempdir");
-        let env = TestEnv { tmp };
+        let env = TestEnv { tmp, runs: Cell::new(0) };
         for dir in ["home", "config", "state", "data-home", "share/dbus-1/services"] {
             fs::create_dir_all(env.path(dir)).unwrap();
         }
@@ -90,7 +114,32 @@ impl TestEnv {
         fs::copy(DCONF_SERVICE_FILE, env.path("share/dbus-1/services/ca.desrt.dconf.service"))
             .expect("copy dconf D-Bus service file");
         env.write_profile(false);
+        env.write_bus_config();
         env
+    }
+
+    fn write_bus_config(&self) {
+        let conf = format!(
+            r#"<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <keep_umask/>
+  <listen>unix:dir={runtime}</listen>
+  <auth>EXTERNAL</auth>
+  <servicedir>{services}</servicedir>
+  <apparmor mode="disabled"/>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+"#,
+            runtime = self.path("runtime").display(),
+            services = self.path("share/dbus-1/services").display(),
+        );
+        fs::write(self.path("bus.conf"), conf).unwrap();
     }
 
     pub fn path(&self, rel: &str) -> PathBuf {
@@ -143,7 +192,8 @@ impl TestEnv {
     /// the hermetic environment.
     pub fn command(&self, program: impl AsRef<Path>) -> Command {
         let mut cmd = Command::new(DBUS_RUN_SESSION);
-        cmd.arg("--")
+        cmd.arg(format!("--config-file={}", self.path("bus.conf").display()))
+            .arg("--")
             .arg(program.as_ref())
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
@@ -160,9 +210,33 @@ impl TestEnv {
         cmd
     }
 
+    /// Run gsap with the hermetic environment but no reachable session bus.
+    pub fn gsap_without_bus(&self, args: &[&str]) -> Run {
+        let cmd = self.command(env!("CARGO_BIN_EXE_gsap"));
+        let out = Command::new(env!("CARGO_BIN_EXE_gsap"))
+            .args(args)
+            .env_clear()
+            .envs(cmd.get_envs().filter_map(|(k, v)| Some((k.to_owned(), v?.to_owned()))))
+            .env("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={}", self.path("runtime/no-bus").display()))
+            .output()
+            .expect("run gsap");
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        Run::from_output(out, stderr)
+    }
+
     pub fn gsap(&self, args: &[&str]) -> Run {
-        let out = self.command(env!("CARGO_BIN_EXE_gsap")).args(args).output().expect("run gsap");
-        Run::from_output(out)
+        let n = self.runs.get() + 1;
+        self.runs.set(n);
+        let stderr_file = self.path(&format!("stderr-{n}"));
+        let out = self
+            .command("/bin/sh")
+            .args(["-c", r#"exec "$@" 2>"$GSAP_TEST_STDERR""#, "sh", env!("CARGO_BIN_EXE_gsap")])
+            .args(args)
+            .env("GSAP_TEST_STDERR", &stderr_file)
+            .output()
+            .expect("run gsap");
+        let stderr = fs::read_to_string(&stderr_file).unwrap_or_default();
+        Run::from_output(out, stderr)
     }
 }
 

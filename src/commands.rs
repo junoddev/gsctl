@@ -91,17 +91,25 @@ pub fn search(index: &Index, query: &str, limit: usize, prefixes: &[String]) -> 
             let summary = key.summary().map(|s| s.to_string()).unwrap_or_default();
             let description = key.description().map(|s| s.to_string()).unwrap_or_default();
             let doc = Doc { schema: &id, key: &name, summary: &summary, description: &description };
-            if let Some(score) = search::score(query, &doc) {
-                hits.push((score, entry, key, summary));
+            if let Some(m) = search::score(query, &doc) {
+                hits.push((m, entry, key, summary));
             }
         }
+    }
+    // Keys matching every word, if there are any. Otherwise fall back to keys
+    // matching some words (the agent's words may not be GNOME's: "dark mode"
+    // vs color-scheme), ranked by how many matched, and say so.
+    let query_words = search::word_count(query);
+    let partial = !hits.iter().any(|h| h.0.words == query_words);
+    if !partial {
+        hits.retain(|h| h.0.words == query_words);
     }
     hits.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.id().cmp(&b.1.id())).then_with(|| a.2.name().cmp(&b.2.name())));
     let total = hits.len();
     let results: Vec<Value> = hits
         .into_iter()
         .take(limit)
-        .map(|(score, entry, key, summary)| {
+        .map(|(m, entry, key, summary)| {
             let name = key.name();
             let value = if entry.relocatable() {
                 Value::Null
@@ -116,11 +124,12 @@ pub fn search(index: &Index, query: &str, limit: usize, prefixes: &[String]) -> 
                 "value": value,
                 "relocatable": entry.relocatable(),
                 "origin": entry.origin.to_json(),
-                "score": score,
+                "matched_words": m.words,
+                "score": m.score,
             })
         })
         .collect();
-    Ok(json!({ "query": query, "total": total, "results": results }))
+    Ok(json!({ "query": query, "partial": partial, "total": total, "results": results }))
 }
 
 pub fn get(index: &Index, schema: &str, key: &str, path: Option<&str>) -> Result<Value> {
@@ -232,7 +241,20 @@ fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, new: glib::Varian
     }
     gio::Settings::sync();
 
+    // GSettings writes are fire-and-forget: if dconf-service can't be reached,
+    // the change is silently dropped and the old value comes back.
     let now = settings.value(key);
+    let took = match op {
+        "reset" => settings.user_value(key).is_none(),
+        _ => now == new,
+    };
+    if !took {
+        return Err(Error::Internal(format!(
+            "the {op} did not take effect: {schema} {key} still reads {}. Is dconf-service reachable on the \
+             session bus (DBUS_SESSION_BUS_ADDRESS)?",
+            to_json(&now)
+        )));
+    }
     out["value"] = to_json(&now);
     let change = journal::Change {
         op,
