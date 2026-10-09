@@ -16,12 +16,18 @@ All output is JSON on stdout. Errors are JSON on stderr with a `code`, a
 
 ## The loop
 
-1. **Search** for the setting. Every word must match; key names rank highest.
+1. **Search** for the setting. Key names rank highest, then schema ids,
+   summaries and descriptions; plurals match ("workspace" finds
+   `dynamic-workspaces`).
 
-       gsap search dark mode
+       gsap search color scheme
        gsap search workspace --schema org.gnome.mutter --limit 5
 
    Each result has `schema`, `key`, `type`, `summary` and the current `value`.
+   If no key matches every word, you get the keys matching the most words and
+   `"partial": true`. Treat those as hints and try GNOME's vocabulary instead
+   (dark mode is `color-scheme`, the dock is `dash-to-dock`, screen blanking
+   is `idle-delay`).
 
 2. **Inspect** the key before changing it.
 
