@@ -4,6 +4,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand, ValueEnum};
 use gsap::commands::{self, WriteOpts};
 use gsap::error::{Error, Result};
+use gsap::ext;
 use gsap::index::Index;
 use gsap::keys::{self, AddOpts};
 use gsap::state::{self, ApplyOpts, ExportOpts};
@@ -130,6 +131,9 @@ enum Command {
     },
     /// List the export areas and the schemas each covers.
     Areas,
+    /// GNOME Shell extensions: installed, enabled, and their settings.
+    #[command(subcommand)]
+    Ext(ExtCommand),
     /// Keyboard shortcuts across all keybinding schemas and custom bindings.
     #[command(subcommand)]
     Keys(KeysCommand),
@@ -165,6 +169,26 @@ enum Command {
         /// Only this schema and the schemas below it (repeatable).
         #[arg(long)]
         schema: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ExtCommand {
+    /// Installed extensions and whether each is enabled in settings.
+    List,
+    /// One extension's metadata and settings (keys with current values).
+    Info { uuid: String },
+    /// Enable an installed extension (adds just its uuid; no --yes needed).
+    Enable {
+        uuid: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Disable an extension (removes just its uuid; no --yes needed).
+    Disable {
+        uuid: String,
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -222,6 +246,12 @@ fn run(cli: &Cli) -> Result<Value> {
             state::apply(&index, &opts)
         }
         Command::Areas => Ok(state::areas()),
+        Command::Ext(e) => match e {
+            ExtCommand::List => ext::list(&index),
+            ExtCommand::Info { uuid } => ext::info(&index, uuid),
+            ExtCommand::Enable { uuid, dry_run } => ext::set_enabled(&index, uuid, true, *dry_run),
+            ExtCommand::Disable { uuid, dry_run } => ext::set_enabled(&index, uuid, false, *dry_run),
+        },
         Command::Keys(k) => match k {
             KeysCommand::Find { accel } => keys::find(&index, accel),
             KeysCommand::List { custom } => keys::list(&index, *custom),
@@ -247,6 +277,9 @@ fn command_name(c: &Command) -> &'static str {
         Command::Export { .. } => "export",
         Command::Apply { .. } => "apply",
         Command::Areas => "areas",
+        Command::Ext(ExtCommand::List) => "ext-list",
+        Command::Ext(ExtCommand::Info { .. }) => "ext-info",
+        Command::Ext(_) => "ext-enable",
         Command::Keys(KeysCommand::Find { .. }) | Command::Keys(KeysCommand::List { .. }) => "keys-list",
         Command::Keys(KeysCommand::Conflicts) => "keys-conflicts",
         Command::Keys(KeysCommand::Add { .. }) => "keys-add",

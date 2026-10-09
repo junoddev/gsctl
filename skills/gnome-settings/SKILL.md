@@ -150,6 +150,20 @@ wants both. `gsap revert last` removes the binding again. To change a
 built-in shortcut, `gsap set org.gnome.desktop.wm.keybindings <key>
 '["<Super>x"]'` (these keys are string arrays; `[]` disables).
 
+## Extensions
+
+    gsap ext list                 # installed, enabled, enabled_by, schemas
+    gsap ext info <uuid>          # metadata plus its settings with values
+    gsap ext enable <uuid> [--dry-run]
+    gsap ext disable <uuid> [--dry-run]
+
+Change an extension's options through its schema (`gsap ext info` lists it,
+e.g. Ubuntu Dock is `org.gnome.shell.extensions.dash-to-dock`). `enable` and
+`disable` edit just that uuid, so they don't need `--yes`, and `gsap revert
+last` undoes them. Never `set` `enabled-extensions` wholesale. On Ubuntu the
+session mode enables the bundled extensions (`enabled_by: "session-mode"`):
+disabling one adds it to `disabled-extensions`.
+
 ## Other commands
 
 - `gsap changed [--schema org.gnome.desktop]`: keys that differ from their

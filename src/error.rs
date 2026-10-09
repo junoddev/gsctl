@@ -16,6 +16,8 @@ pub enum Error {
     NotWritable { schema: String, key: String },
     #[error("{schema} {key} is a guarded key: {reason}. Re-run with --yes to change it")]
     Guarded { schema: String, key: String, reason: String },
+    #[error("extension not installed: {0}")]
+    ExtensionNotFound(String),
     #[error("journal entry not found: {0}")]
     EntryNotFound(String),
     #[error("{message}")]
@@ -34,7 +36,10 @@ impl Error {
         match self {
             Error::Internal(_) => 1,
             Error::Usage(_) => 2,
-            Error::SchemaNotFound(_) | Error::KeyNotFound { .. } | Error::EntryNotFound(_) => 3,
+            Error::SchemaNotFound(_)
+            | Error::KeyNotFound { .. }
+            | Error::EntryNotFound(_)
+            | Error::ExtensionNotFound(_) => 3,
             Error::InvalidValue { .. } => 4,
             Error::NotWritable { .. } => 5,
             Error::Guarded { .. } => 6,
@@ -53,6 +58,7 @@ impl Error {
             Error::NotWritable { .. } => "not_writable",
             Error::Guarded { .. } => "guarded",
             Error::EntryNotFound(_) => "entry_not_found",
+            Error::ExtensionNotFound(_) => "extension_not_found",
             Error::Conflict { .. } => "conflict",
             Error::Batch { .. } => "batch_invalid",
         }
@@ -75,6 +81,7 @@ impl Error {
             Error::NotWritable { schema, key } => json!({ "schema": schema, "key": key }),
             Error::Guarded { schema, key, reason } => json!({ "schema": schema, "key": key, "reason": reason }),
             Error::EntryNotFound(id) => json!({ "id": id, "hint": "see `gsap history`" }),
+            Error::ExtensionNotFound(uuid) => json!({ "uuid": uuid, "hint": "see `gsap ext list`" }),
             Error::Conflict { id, .. } => json!({ "id": id }),
             Error::Batch { problems, .. } => json!({ "problems": problems }),
             Error::Usage(_) | Error::Internal(_) => Value::Null,

@@ -140,6 +140,33 @@ pub fn render(command: &str, out: &Value) -> String {
                 s(&out["command"])
             ));
         }
+        "ext-list" => {
+            for e in out["extensions"].as_array().into_iter().flatten() {
+                let on = if e["enabled"] == true { "on " } else { "off" };
+                line(format!("{on} {:<40} {}  ({})", s(&e["uuid"]), s(&e["name"]), s(&e["location"])));
+            }
+            if out["user_extensions_disabled"] == true {
+                line("(all user extensions are disabled: org.gnome.shell disable-user-extensions)".into());
+            }
+        }
+        "ext-info" => {
+            let on = if out["enabled"] == true { "enabled" } else { "disabled" };
+            line(format!("{} ({on}): {}", s(&out["uuid"]), s(&out["name"])));
+            for sch in out["settings"].as_array().into_iter().flatten() {
+                for k in sch["keys"].as_array().into_iter().flatten() {
+                    line(format!("  {}", key_text(k)));
+                }
+            }
+        }
+        "ext-enable" => {
+            let state = if out["enabled"] == true { "enabled" } else { "disabled" };
+            let what = match (out["changed"] == true, out["dry_run"] == true) {
+                (false, _) => "already",
+                (true, true) => "would be",
+                (true, false) => "now",
+            };
+            line(format!("{} {what} {state}", s(&out["uuid"])));
+        }
         _ => line(serde_json::to_string_pretty(out).unwrap()),
     }
     text

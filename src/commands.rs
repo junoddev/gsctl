@@ -348,7 +348,7 @@ pub fn revert(index: &Index, id: &str, force: bool, dry_run: bool, yes: bool) ->
     // Undo in reverse order, after checking every entry.
     let prepared = target.iter().rev().map(|e| prepare_revert(index, e, force)).collect::<Result<Vec<_>>>()?;
     if !dry_run && !yes {
-        for p in &prepared {
+        for p in prepared.iter().filter(|p| !p.targeted) {
             if let Some(reason) = guard::check(&p.entry.id(), &p.key) {
                 return Err(Error::Guarded { schema: p.entry.id(), key: p.key.clone(), reason: reason.to_string() });
             }
@@ -358,7 +358,7 @@ pub fn revert(index: &Index, id: &str, force: bool, dry_run: bool, yes: bool) ->
     let run_batch = batch.as_ref().map(|b| format!("revert-{b}"));
     let mut results = Vec::new();
     for p in prepared {
-        let opts = WriteOpts { path: p.path.as_deref(), dry_run, yes };
+        let opts = WriteOpts { path: p.path.as_deref(), dry_run, yes: yes || p.targeted };
         let tags = Tags { reverts: Some(&p.id), batch: run_batch.as_deref() };
         let mut out = write(p.entry, &p.key, &opts, "revert", p.action, tags)?;
         out["reverts"] = p.id.clone().into();
@@ -376,6 +376,9 @@ struct PreparedRevert<'a> {
     path: Option<String>,
     action: Action,
     id: String,
+    /// Undoes a targeted edit (`ext enable`/`disable` changes one uuid), which
+    /// didn't need `--yes`, so its revert doesn't either.
+    targeted: bool,
 }
 
 fn prepare_revert<'a>(index: &'a Index, e: &Value, force: bool) -> Result<PreparedRevert<'a>> {
@@ -420,7 +423,15 @@ fn prepare_revert<'a>(index: &'a Index, e: &Value, force: bool) -> Result<Prepar
             Action::Set(v)
         }
     };
-    Ok(PreparedRevert { entry, key: key.to_string(), path: path.map(str::to_string), action, id: id.to_string() })
+    let targeted = e["op"].as_str().is_some_and(|op| op.starts_with("ext-"));
+    Ok(PreparedRevert {
+        entry,
+        key: key.to_string(),
+        path: path.map(str::to_string),
+        action,
+        id: id.to_string(),
+        targeted,
+    })
 }
 
 fn read_journal() -> Result<Vec<Value>> {

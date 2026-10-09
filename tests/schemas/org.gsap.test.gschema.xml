@@ -140,6 +140,34 @@
     </key>
   </schema>
 
+  <!-- Installed system-wide for system@gsap.test, which names it only in its JS. -->
+  <schema id="org.gnome.shell.extensions.gsap-system" path="/org/gnome/shell/extensions/gsap-system/">
+    <key name="dock-side" type="s">
+      <default>'left'</default>
+      <summary>Dock side</summary>
+    </key>
+  </schema>
+
+  <!-- Stand-in for org.gnome.shell, for `gsap ext`. -->
+  <schema id="org.gnome.shell" path="/org/gnome/shell/">
+    <key name="enabled-extensions" type="as">
+      <default>[]</default>
+      <summary>UUIDs of extensions to enable</summary>
+    </key>
+    <key name="disabled-extensions" type="as">
+      <default>[]</default>
+      <summary>UUIDs of extensions to force disabling</summary>
+    </key>
+    <key name="disable-user-extensions" type="b">
+      <default>false</default>
+      <summary>Disable user extensions</summary>
+    </key>
+    <key name="favorite-apps" type="as">
+      <default>[]</default>
+      <summary>Favorite apps</summary>
+    </key>
+  </schema>
+
   <!-- Stand-ins for keybinding schemas, for `gsap keys`. -->
   <schema id="org.gnome.desktop.wm.keybindings" path="/org/gnome/desktop/wm/keybindings/">
     <key name="switch-applications" type="as">

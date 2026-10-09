@@ -33,6 +33,7 @@ use serde_json::Value;
 pub const DBUS_RUN_SESSION: &str = "/usr/bin/dbus-run-session";
 pub const DCONF_SERVICE_FILE: &str = "/usr/share/dbus-1/services/ca.desrt.dconf.service";
 pub const EXTENSION_UUID: &str = "demo@gsap.test";
+pub const SYSTEM_EXTENSION_UUID: &str = "system@gsap.test";
 
 pub struct TestEnv {
     tmp: tempfile::TempDir,
@@ -108,6 +109,24 @@ impl TestEnv {
         fs::write(
             env.extension_dir().join("metadata.json"),
             format!(r#"{{"uuid": "{EXTENSION_UUID}", "name": "Demo", "shell-version": ["50"]}}"#),
+        )
+        .unwrap();
+
+        // A system-wide extension without its own schemas or settings-schema,
+        // enabled by the session mode, like Ubuntu's dock.
+        let sys_ext = env.path("share/gnome-shell/extensions").join(SYSTEM_EXTENSION_UUID);
+        fs::create_dir_all(&sys_ext).unwrap();
+        fs::write(
+            sys_ext.join("metadata.json"),
+            format!(r#"{{"uuid": "{SYSTEM_EXTENSION_UUID}", "name": "System Demo", "shell-version": ["50"]}}"#),
+        )
+        .unwrap();
+        fs::write(sys_ext.join("extension.js"), "const s = this.getSettings('org.gnome.shell.extensions.gsap-system');\nconst i = new Gio.Settings({schema_id: 'org.gsap.test'});\n").unwrap();
+        let modes = env.path("share/gnome-shell/modes");
+        fs::create_dir_all(&modes).unwrap();
+        fs::write(
+            modes.join("testmode.json"),
+            format!(r#"{{"parentMode": "user", "enabledExtensions": ["{SYSTEM_EXTENSION_UUID}"]}}"#),
         )
         .unwrap();
 
@@ -206,6 +225,7 @@ impl TestEnv {
             .env("XDG_RUNTIME_DIR", self.path("runtime"))
             .env("DCONF_PROFILE", self.path("dconf-profile"))
             .env("GSETTINGS_BACKEND", "dconf")
+            .env("GNOME_SHELL_SESSION_MODE", "testmode")
             .env("GSETTINGS_SCHEMA_DIR", self.schema_dir());
         cmd
     }

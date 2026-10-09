@@ -3,6 +3,7 @@
 pub mod commands;
 pub mod convert;
 pub mod error;
+pub mod ext;
 pub mod guard;
 pub mod index;
 pub mod journal;
