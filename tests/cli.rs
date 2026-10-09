@@ -383,3 +383,113 @@ fn text_format() {
     let r = env.gsap(&["set", S, "count-i", "12", "--format", "text"]);
     assert_eq!(r.stdout, "org.gsap.test count-i changed: 10 -> 12\n");
 }
+
+// --- history / revert -------------------------------------------------------
+
+fn id_of(out: &Value) -> String {
+    out["journal_id"].as_str().expect("journal_id").to_string()
+}
+
+#[test]
+fn history_lists_newest_first_with_filters() {
+    let env = TestEnv::new();
+    assert_eq!(env.gsap(&["history"]).ok()["total"], 0);
+
+    env.gsap(&["set", S, "count-i", "20"]).ok();
+    env.gsap(&["set", S, "name-s", "A"]).ok();
+    env.gsap(&["set", "org.gnome.desktop.screensaver", "lock-delay", "9"]).ok();
+    env.gsap(&["reset", S, "count-i"]).ok();
+
+    let h = env.gsap(&["history"]).ok();
+    assert_eq!(h["total"], 4);
+    let ops: Vec<(&str, &str)> = h["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["op"].as_str().unwrap(), e["key"].as_str().unwrap()))
+        .collect();
+    assert_eq!(ops, [("reset", "count-i"), ("set", "lock-delay"), ("set", "name-s"), ("set", "count-i")]);
+
+    assert_eq!(env.gsap(&["history", "--limit", "1"]).ok()["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(env.gsap(&["history", "--key", "count-i"]).ok()["total"], 2);
+    assert_eq!(env.gsap(&["history", "--schema", "org.gnome.desktop"]).ok()["total"], 1);
+}
+
+#[test]
+fn revert_a_set_from_default_resets_the_key() {
+    let env = TestEnv::new();
+    let set = env.gsap(&["set", S, "size-u", "600"]).ok();
+    let out = env.gsap(&["revert", "last"]).ok();
+    assert_eq!(out["op"], "revert");
+    assert_eq!(out["reverts"], id_of(&set));
+    assert_eq!(out["value"], 300);
+    let got = env.gsap(&["get", S, "size-u"]).ok();
+    assert_eq!(got["is_default"], true, "reverting a change from the default must reset, not pin the default");
+
+    let h = env.gsap(&["history"]).ok();
+    assert_eq!(h["entries"][0]["reverts"], id_of(&set));
+    assert_eq!(h["entries"][1]["reverted_by"], out["journal_id"]);
+}
+
+#[test]
+fn revert_restores_previous_user_values() {
+    let env = TestEnv::new();
+    env.gsap(&["set", S, "dict-asv", r#"{"a": 1}"#]).ok();
+    let second = env.gsap(&["set", S, "dict-asv", r#"{"b": true}"#]).ok();
+    env.gsap(&["revert", &id_of(&second)]).ok();
+    let got = env.gsap(&["get", S, "dict-asv"]).ok();
+    assert_eq!(got["value"], json!({"a": 1}));
+    assert_eq!(got["is_default"], false);
+
+    // Reverting a reset brings back the value it cleared.
+    env.gsap(&["reset", S, "dict-asv"]).ok();
+    env.gsap(&["revert", "last"]).ok();
+    assert_eq!(env.gsap(&["get", S, "dict-asv"]).ok()["value"], json!({"a": 1}));
+}
+
+#[test]
+fn revert_refuses_keys_changed_since_unless_forced() {
+    let env = TestEnv::new();
+    let first = env.gsap(&["set", S, "name-s", "First"]).ok();
+    env.gsap(&["set", S, "name-s", "Second"]).ok();
+
+    let r = env.gsap(&["revert", &id_of(&first)]);
+    assert_eq!(r.status, 7, "{}", r.stderr);
+    assert_eq!(r.error()["error"]["code"], "conflict");
+    assert_eq!(env.gsap(&["get", S, "name-s"]).ok()["value"], "Second");
+
+    env.gsap(&["revert", &id_of(&first), "--force"]).ok();
+    let got = env.gsap(&["get", S, "name-s"]).ok();
+    assert_eq!(got["value"], "Adwaita");
+    assert_eq!(got["is_default"], true);
+}
+
+#[test]
+fn revert_dry_run_unknown_ids_and_guards() {
+    let env = TestEnv::new();
+    let r = env.gsap(&["revert", "last"]);
+    assert_eq!(r.status, 3);
+    assert_eq!(r.error()["error"]["code"], "entry_not_found");
+    assert_eq!(env.gsap(&["revert", "nope"]).status, 3);
+
+    env.gsap(&["set", S, "count-i", "33"]).ok();
+    let dry = env.gsap(&["revert", "last", "--dry-run"]).ok();
+    assert_eq!(dry["old"], 33);
+    assert_eq!(dry["new"], 10);
+    assert_eq!(env.gsap(&["get", S, "count-i"]).ok()["value"], 33);
+
+    let screensaver = "org.gnome.desktop.screensaver";
+    env.gsap(&["set", screensaver, "lock-enabled", "false", "--yes"]).ok();
+    assert_eq!(env.gsap(&["revert", "last"]).status, 6);
+    env.gsap(&["revert", "last", "--yes"]).ok();
+    assert_eq!(env.gsap(&["get", screensaver, "lock-enabled"]).ok()["value"], true);
+}
+
+#[test]
+fn revert_relocatable_keys() {
+    let env = TestEnv::new();
+    let p = "/org/gsap/test/custom1/";
+    env.gsap(&["set", "org.gsap.test.reloc", "name", "Terminal", "--path", p]).ok();
+    env.gsap(&["revert", "last"]).ok();
+    assert_eq!(env.gsap(&["get", "org.gsap.test.reloc", "name", "--path", p]).ok()["value"], "");
+}

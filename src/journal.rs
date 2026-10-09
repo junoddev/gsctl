@@ -1,6 +1,6 @@
 //! Append-only log of every change gsap makes, with the previous value, at
 //! `$XDG_STATE_HOME/gsap/journal.ndjson` (default `~/.local/state/...`).
-//! `history` and `revert` will read it.
+//! `history` and `revert` read it.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -28,13 +28,15 @@ pub struct Change<'a> {
     pub old: &'a glib::Variant,
     pub old_user_value: Option<&'a glib::Variant>,
     pub new: &'a glib::Variant,
+    /// For a revert, the id of the entry it undoes.
+    pub reverts: Option<&'a str>,
 }
 
 /// Append `change` and return its entry id.
 pub fn record(change: &Change) -> std::io::Result<String> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     let id = format!("{}-{}", now.as_millis(), std::process::id());
-    let entry = json!({
+    let mut entry = json!({
         "id": id,
         "time": rfc3339(now.as_secs()),
         "op": change.op,
@@ -47,8 +49,21 @@ pub fn record(change: &Change) -> std::io::Result<String> {
         "old_user_value": change.old_user_value.map(|v| v.print(true).to_string()),
         "new_gvariant": change.new.print(true).as_str(),
     });
+    if let Some(r) = change.reverts {
+        entry["reverts"] = r.into();
+    }
     append(&entry)?;
     Ok(id)
+}
+
+/// All entries, oldest first. A missing journal is empty; unparseable lines
+/// (e.g. a torn write) are skipped.
+pub fn read() -> std::io::Result<Vec<Value>> {
+    match fs::read_to_string(path()) {
+        Ok(text) => Ok(text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
+        Err(e) => Err(e),
+    }
 }
 
 fn append(entry: &Value) -> std::io::Result<()> {

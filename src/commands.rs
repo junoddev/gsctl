@@ -195,20 +195,31 @@ pub fn set(index: &Index, schema: &str, key: &str, raw: &str, opts: &WriteOpts) 
     if let Some(msg) = range_error(&k, &new) {
         return Err(invalid(msg));
     }
-    write(entry, key, opts, "set", new)
+    write(entry, key, opts, "set", Action::Set(new), None)
 }
 
 pub fn reset(index: &Index, schema: &str, key: &str, opts: &WriteOpts) -> Result<Value> {
     let entry = index.get(schema)?;
     entry.key(key)?;
-    let settings = entry.settings(opts.path)?;
-    let default = settings.default_value(key).unwrap_or_else(|| entry.schema.key(key).default_value());
-    write(entry, key, opts, "reset", default)
+    write(entry, key, opts, "reset", Action::Reset, None)
 }
 
-fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, new: glib::Variant) -> Result<Value> {
+enum Action {
+    Set(glib::Variant),
+    Reset,
+}
+
+/// Validate-free core of every write: writability, guard, dry-run, the write
+/// itself, read-back verification and the journal. `op` labels the journal
+/// entry; `reverts` is the journal id a revert undoes.
+fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action: Action, reverts: Option<&str>) -> Result<Value> {
     let schema = entry.id();
     let settings = entry.settings(opts.path)?;
+    let is_reset = matches!(action, Action::Reset);
+    let new = match action {
+        Action::Set(v) => v,
+        Action::Reset => settings.default_value(key).unwrap_or_else(|| entry.schema.key(key).default_value()),
+    };
     let old = settings.value(key);
     let old_user = settings.user_value(key);
     if !settings.is_writable(key) {
@@ -222,7 +233,7 @@ fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, new: glib::Varian
         "op": op,
         "old": to_json(&old),
         "new": to_json(&new),
-        "changed": old != new || (op == "reset" && old_user.is_some()),
+        "changed": old != new || (is_reset && old_user.is_some()),
         "dry_run": opts.dry_run,
     });
     if opts.dry_run {
@@ -235,19 +246,17 @@ fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, new: glib::Varian
         return Err(Error::Guarded { schema, key: key.to_string(), reason: reason.to_string() });
     }
 
-    match op {
-        "reset" => settings.reset(key),
-        _ => settings.set_value(key, &new).map_err(|e| Error::Internal(format!("GSettings refused the write: {e}")))?,
+    if is_reset {
+        settings.reset(key);
+    } else {
+        settings.set_value(key, &new).map_err(|e| Error::Internal(format!("GSettings refused the write: {e}")))?;
     }
     gio::Settings::sync();
 
     // GSettings writes are fire-and-forget: if dconf-service can't be reached,
     // the change is silently dropped and the old value comes back.
     let now = settings.value(key);
-    let took = match op {
-        "reset" => settings.user_value(key).is_none(),
-        _ => now == new,
-    };
+    let took = if is_reset { settings.user_value(key).is_none() } else { now == new };
     if !took {
         return Err(Error::Internal(format!(
             "the {op} did not take effect: {schema} {key} still reads {}. Is dconf-service reachable on the \
@@ -264,12 +273,95 @@ fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, new: glib::Varian
         old: &old,
         old_user_value: old_user.as_ref(),
         new: &now,
+        reverts,
     };
     match journal::record(&change) {
         Ok(id) => out["journal_id"] = id.into(),
         Err(e) => out["journal_error"] = format!("{}: {e}", journal::path().display()).into(),
     }
     Ok(out)
+}
+
+pub fn history(limit: usize, prefixes: &[String], key: Option<&str>) -> Result<Value> {
+    let entries = read_journal()?;
+    let reverted_by: Vec<(String, String)> = entries
+        .iter()
+        .filter_map(|e| Some((e["reverts"].as_str()?.to_string(), e["id"].as_str()?.to_string())))
+        .collect();
+    let matching: Vec<Value> = entries
+        .into_iter()
+        .rev()
+        .filter(|e| matches_prefix(e["schema"].as_str().unwrap_or_default(), prefixes))
+        .filter(|e| key.is_none_or(|k| e["key"] == k))
+        .map(|mut e| {
+            let id = e["id"].as_str().unwrap_or_default().to_string();
+            if let Some((_, by)) = reverted_by.iter().rev().find(|(r, _)| *r == id) {
+                e["reverted_by"] = by.clone().into();
+            }
+            e
+        })
+        .collect();
+    let total = matching.len();
+    let shown: Vec<Value> = matching.into_iter().take(limit).collect();
+    Ok(json!({ "journal": journal::path(), "total": total, "entries": shown }))
+}
+
+/// Undo journal entry `id` (or `last`): set the key back to its previous
+/// value, or reset it if it was at its default. Refuses if the key has changed
+/// since, unless `force`.
+pub fn revert(index: &Index, id: &str, force: bool, dry_run: bool, yes: bool) -> Result<Value> {
+    let entries = read_journal()?;
+    let found = if id == "last" { entries.last() } else { entries.iter().find(|e| e["id"] == id) };
+    let e = found.ok_or_else(|| Error::EntryNotFound(id.to_string()))?;
+    let id = e["id"].as_str().unwrap_or_default();
+    let field =
+        |name: &str| e[name].as_str().ok_or_else(|| Error::Internal(format!("journal entry {id} has no {name}")));
+    let (schema, key) = (field("schema")?, field("key")?);
+    let path = e["path"].as_str();
+    let entry = index.get(schema)?;
+    let k = entry.key(key)?;
+    let ty = k.value_type();
+    let parse = |text: &str| {
+        glib::Variant::parse(Some(&ty), text).map_err(|err| {
+            Error::Internal(format!("journal entry {id}: cannot parse {text:?} as {}: {err}", ty.as_str()))
+        })
+    };
+
+    let expected = parse(field("new_gvariant")?)?;
+    let current = entry.settings(path)?.value(key);
+    if current != expected && !force {
+        return Err(Error::Conflict {
+            id: id.to_string(),
+            message: format!(
+                "{schema} {key} has changed since entry {id}: it is {} now, not {}. Re-run with --force to revert anyway",
+                to_json(&current),
+                to_json(&expected)
+            ),
+        });
+    }
+
+    let action = match e["old_user_value"].as_str() {
+        None => Action::Reset,
+        Some(text) => {
+            let v = parse(text)?;
+            if let Some(msg) = range_error(&k, &v) {
+                // The schema changed since the entry was written.
+                return Err(Error::InvalidValue {
+                    message: format!("cannot revert entry {id}: {msg}"),
+                    details: json!({ "schema": schema, "key": key, "range": range_json(&k) }),
+                });
+            }
+            Action::Set(v)
+        }
+    };
+    let opts = WriteOpts { path, dry_run, yes };
+    let mut out = write(entry, key, &opts, "revert", action, Some(id))?;
+    out["reverts"] = id.into();
+    Ok(out)
+}
+
+fn read_journal() -> Result<Vec<Value>> {
+    journal::read().map_err(|e| Error::Internal(format!("cannot read {}: {e}", journal::path().display())))
 }
 
 pub fn changed(index: &Index, prefixes: &[String]) -> Result<Value> {

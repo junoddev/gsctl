@@ -13,7 +13,8 @@ use serde_json::Value;
 ///
 /// Output is JSON on stdout; errors are JSON on stderr. Exit codes: 0 ok,
 /// 1 internal error, 2 usage, 3 schema or key not found, 4 invalid value,
-/// 5 not writable, 6 guarded key (needs --yes).
+/// 5 not writable, 6 guarded key (needs --yes), 7 conflict (revert of a key
+/// changed since; needs --force).
 #[derive(Parser)]
 #[command(name = "gsap", version, max_term_width = 100)]
 struct Cli {
@@ -93,6 +94,32 @@ enum Command {
         #[arg(long)]
         yes: bool,
     },
+    /// List recorded changes (set, reset, revert), newest first.
+    History {
+        /// Maximum number of entries.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Only this schema and the schemas below it (repeatable).
+        #[arg(long)]
+        schema: Vec<String>,
+        /// Only this key.
+        #[arg(long)]
+        key: Option<String>,
+    },
+    /// Undo a recorded change: restore the previous value, or reset the key if
+    /// it was at its default. ID is from `gsap history`, or `last`.
+    Revert {
+        id: String,
+        /// Revert even if the key has changed since the entry.
+        #[arg(long)]
+        force: bool,
+        /// Show the change without writing it.
+        #[arg(long)]
+        dry_run: bool,
+        /// Confirm a change to a guarded key.
+        #[arg(long)]
+        yes: bool,
+    },
     /// List keys whose value differs from the default: what was customised.
     Changed {
         /// Only this schema and the schemas below it (repeatable).
@@ -118,6 +145,8 @@ fn run(cli: &Cli) -> Result<Value> {
             commands::reset(&index, schema, key, &opts)
         }
         Command::Changed { schema } => commands::changed(&index, schema),
+        Command::History { limit, schema, key } => commands::history(*limit, schema, key.as_deref()),
+        Command::Revert { id, force, dry_run, yes } => commands::revert(&index, id, *force, *dry_run, *yes),
     }
 }
 
@@ -129,6 +158,8 @@ fn command_name(c: &Command) -> &'static str {
         Command::Set { .. } => "set",
         Command::Reset { .. } => "reset",
         Command::Changed { .. } => "changed",
+        Command::History { .. } => "history",
+        Command::Revert { .. } => "revert",
     }
 }
 

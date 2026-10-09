@@ -54,7 +54,7 @@ pub fn render(command: &str, out: &Value) -> String {
             }
         }
         "get" => line(compact(&out["value"])),
-        "set" | "reset" => {
+        "set" | "reset" | "revert" => {
             let what = if out["dry_run"] == true { "would change" } else { "changed" };
             let what = if out["changed"] == false { "unchanged" } else { what };
             line(format!(
@@ -73,6 +73,25 @@ pub fn render(command: &str, out: &Value) -> String {
                     s(&c["key"]),
                     compact(&c["value"]),
                     compact(&c["default"])
+                ));
+            }
+        }
+        "history" => {
+            for e in out["entries"].as_array().into_iter().flatten() {
+                let note = match (e["reverts"].as_str(), e["reverted_by"].as_str()) {
+                    (Some(r), _) => format!("  (reverts {r})"),
+                    (None, Some(by)) => format!("  (reverted by {by})"),
+                    _ => String::new(),
+                };
+                line(format!(
+                    "{} {} {:<6} {} {}: {} -> {}{note}",
+                    s(&e["id"]),
+                    s(&e["time"]),
+                    s(&e["op"]),
+                    s(&e["schema"]),
+                    s(&e["key"]),
+                    compact(&e["old"]),
+                    compact(&e["new"])
                 ));
             }
         }

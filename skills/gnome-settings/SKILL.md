@@ -57,8 +57,19 @@ All output is JSON on stdout. Errors are JSON on stderr with a `code`, a
    repo and commit. Until then, note the `schema key value` triple in the
    setup repo's notes.
 
-To undo, `gsap reset <schema> <key>` restores the default. The previous value
-of every change is in `~/.local/state/gsap/journal.ndjson`.
+## Undo
+
+Every `set`, `reset` and `revert` is journaled with the previous value.
+
+    gsap history                      # newest first; --key, --schema, --limit
+    gsap revert last --dry-run        # or an id from history
+    gsap revert last
+
+`revert` restores the previous value, or resets the key if it was at its
+default. If the key has changed since that entry it refuses (exit 7); check
+`gsap get` and `gsap history --key <key>`, and only use `--force` if
+overwriting the newer value is really intended. `gsap reset <schema> <key>`
+goes straight back to the default.
 
 ## Writing values
 
@@ -87,6 +98,7 @@ shell.
 | 4 | invalid value | read `type`, `range` and `message` in the error and retry |
 | 5 | not writable | locked by the administrator; tell the user |
 | 6 | guarded key | ask the user, then re-run with `--yes` |
+| 7 | conflict | `revert` of a key changed since; inspect, then `--force` if intended |
 
 ## Guarded keys
 
