@@ -593,6 +593,22 @@ fn revert_last_after_a_redo_undoes_the_redone_change() {
     assert_eq!(env.gsctl(&["revert", "last"]).status, 3, "nothing left to undo");
 }
 
+#[test]
+fn a_torn_journal_line_does_not_swallow_the_next_entry() {
+    let env = TestEnv::new();
+    env.gsctl(&["set", S, "count-i", "20"]).ok();
+    let mut text = std::fs::read_to_string(env.journal()).unwrap();
+    text.push_str("42\n{\"id\": \"torn-wri"); // a non-object line, and a line cut short
+    std::fs::write(env.journal(), text).unwrap();
+
+    let b = env.gsctl(&["set", S, "name-s", "B"]).ok();
+    let h = env.gsctl(&["history"]).ok();
+    assert_eq!(h["total"], 2, "{h}");
+    assert_eq!(h["entries"][0]["id"], id_of(&b).as_str());
+    assert_eq!(h["skipped_lines"], 2);
+    assert_eq!(env.gsctl(&["revert", "last"]).ok()["reverts"], id_of(&b).as_str());
+}
+
 /// Rewrite the newest journal entry with `edit`.
 fn tamper_last_entry(env: &TestEnv, edit: impl Fn(&mut Value)) {
     let mut entries = journal(env);

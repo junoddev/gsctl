@@ -367,7 +367,8 @@ fn roll_back(error: Error, done: Vec<(Value, &BatchItem, Option<glib::Variant>)>
 }
 
 pub fn history(limit: usize, prefixes: &[String], key: Option<&str>) -> Result<Value> {
-    let entries = read_journal()?;
+    let (entries, skipped) = journal::read_counting_skipped()
+        .map_err(|e| Error::Internal(format!("cannot read {}: {e}", journal::path().display())))?;
     let undone = undone_by(&entries);
     let matching: Vec<Value> = entries
         .iter()
@@ -384,7 +385,12 @@ pub fn history(limit: usize, prefixes: &[String], key: Option<&str>) -> Result<V
         .collect();
     let total = matching.len();
     let shown: Vec<Value> = matching.into_iter().take(limit).collect();
-    Ok(json!({ "journal": journal::path(), "total": total, "entries": shown }))
+    let mut out = json!({ "journal": journal::path(), "total": total, "entries": shown });
+    if skipped > 0 {
+        // Corrupt lines (a torn write, or edited by hand) are left out.
+        out["skipped_lines"] = skipped.into();
+    }
+    Ok(out)
 }
 
 /// Journal entries whose change is undone, mapped to the revert that undid
