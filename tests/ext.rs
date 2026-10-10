@@ -149,3 +149,15 @@ fn reverting_a_disable_needs_yes_since_it_enables() {
     env.gsctl(&["revert", "last"]).ok();
     assert_eq!(ext(&env.gsctl(&["ext", "list"]).ok(), EXTENSION_UUID)["enabled"], false);
 }
+
+#[test]
+fn plain_gnome_desktop_is_user_mode() {
+    // Without GNOME_SHELL_SESSION_MODE, XDG_CURRENT_DESKTOP=GNOME (Fedora, Arch)
+    // means the user mode, not the only installed mode file.
+    let env = TestEnv::new();
+    let r = env.session_script("env -u GNOME_SHELL_SESSION_MODE XDG_CURRENT_DESKTOP=GNOME \"$GSCTL\" ext list");
+    let list = r.ok();
+    assert_eq!(list["session_mode"]["name"], "user");
+    assert_eq!(list["session_mode"]["source"], "env");
+    assert_eq!(ext(&list, SYSTEM_EXTENSION_UUID)["enabled"], false);
+}

@@ -159,8 +159,7 @@ fn mode_file(name: &str) -> Option<Value> {
 pub fn session_mode() -> SessionMode {
     let from_env = std::env::var("GNOME_SHELL_SESSION_MODE").ok().filter(|m| !m.is_empty()).or_else(|| {
         let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok()?;
-        let first = desktop.split(':').next()?.to_lowercase();
-        mode_file(&first).map(|_| first)
+        mode_from_desktop(&desktop, |m| mode_file(m).is_some())
     });
     let (name, source) = match from_env {
         Some(m) => (m, "env"),
@@ -196,6 +195,22 @@ pub fn session_mode() -> SessionMode {
         }
     }
     SessionMode { name, source, extensions }
+}
+
+/// The session mode `XDG_CURRENT_DESKTOP` implies: its first entry when a mode
+/// file has that name (Ubuntu's `ubuntu:GNOME`), `classic` for
+/// `GNOME-Classic`, and plain `user` for any other GNOME session (Fedora's and
+/// Arch's `GNOME`), even when another mode such as `classic` is installed.
+fn mode_from_desktop(desktop: &str, installed: impl Fn(&str) -> bool) -> Option<String> {
+    let parts: Vec<String> = desktop.split(':').map(str::to_lowercase).collect();
+    let first = parts.first()?;
+    if installed(first) {
+        Some(first.clone())
+    } else if first == "gnome-classic" && installed("classic") {
+        Some("classic".to_string())
+    } else {
+        parts.iter().any(|p| p == "gnome" || p.starts_with("gnome-")).then(|| "user".to_string())
+    }
 }
 
 fn shell_state(index: &Index) -> Result<ShellState> {
@@ -350,4 +365,20 @@ pub fn set_enabled(index: &Index, uuid: &str, enable: bool, dry_run: bool, yes: 
         "user_extensions_disabled": after.user_disabled,
         "writes": writes,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mode_from_desktop;
+
+    #[test]
+    fn mode_from_desktop_names() {
+        let ubuntu = |m: &str| matches!(m, "ubuntu" | "classic");
+        let mode = |desktop, installed: &dyn Fn(&str) -> bool| mode_from_desktop(desktop, installed);
+        assert_eq!(mode("ubuntu:GNOME", &ubuntu).as_deref(), Some("ubuntu"));
+        // Fedora and Arch say plain GNOME; an installed classic mode isn't it.
+        assert_eq!(mode("GNOME", &|m| m == "classic").as_deref(), Some("user"));
+        assert_eq!(mode("GNOME-Classic:GNOME", &|m| m == "classic").as_deref(), Some("classic"));
+        assert_eq!(mode("KDE", &|_| false), None);
+    }
 }
