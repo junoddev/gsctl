@@ -115,3 +115,21 @@ fn reports_disable_user_extensions() {
     env.gsctl(&["set", SHELL, "disable-user-extensions", "true", "--yes"]).ok();
     assert_eq!(env.gsctl(&["ext", "list"]).ok()["user_extensions_disabled"], true);
 }
+
+#[test]
+fn enable_reports_the_real_state_when_user_extensions_are_off() {
+    let env = TestEnv::new();
+    env.gsctl(&["set", SHELL, "disable-user-extensions", "true", "--yes"]).ok();
+    for args in [vec!["ext", "enable", EXTENSION_UUID, "--dry-run"], vec!["ext", "enable", EXTENSION_UUID]] {
+        let out = env.gsctl(&args).ok();
+        assert_eq!(out["changed"], true, "{args:?}");
+        assert_eq!(out["enabled"], false, "{args:?}: disable-user-extensions keeps it off");
+        assert_eq!(out["user_extensions_disabled"], true);
+    }
+    assert_eq!(ext(&env.gsctl(&["ext", "list"]).ok(), EXTENSION_UUID)["enabled"], false);
+
+    // A session-mode extension is on regardless.
+    let out = env.gsctl(&["ext", "enable", SYSTEM_EXTENSION_UUID]).ok();
+    assert_eq!(out["enabled"], true);
+    assert_eq!(out["enabled_by"], "session-mode");
+}
