@@ -5,6 +5,7 @@ pub mod convert;
 pub mod doctor;
 pub mod error;
 pub mod ext;
+pub mod fsutil;
 pub mod guard;
 pub mod index;
 pub mod journal;

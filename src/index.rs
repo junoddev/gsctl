@@ -144,6 +144,9 @@ const LISTED: &[Listed] = &[
     },
 ];
 
+/// The only schema ids an extension's own `schemas/` dir may add.
+const EXTENSION_NAMESPACE: &str = "org.gnome.shell.extensions.";
+
 fn valid_path(p: &str) -> bool {
     p.starts_with('/') && p.ends_with('/') && !p.contains("//")
 }
@@ -164,9 +167,20 @@ impl Index {
             }
         };
 
-        // Extensions first: like GNOME Shell, an extension's bundled schema wins
-        // over a copy installed system-wide, and it tells us which extension
-        // owns the keys.
+        // The system source first: it wins for every id it has, so an
+        // extension (even a disabled one) can't redefine a system schema's
+        // types, ranges, path or descriptions.
+        if let Some(source) = &default {
+            let (fixed, relocatable) = source.list_schemas(true);
+            for id in fixed.iter().chain(relocatable.iter()) {
+                if let Some(schema) = source.lookup(id, true) {
+                    push(&mut entries, schema, Origin::System);
+                }
+            }
+        }
+
+        // Extensions may only add schemas in their own namespace, at a path
+        // no system schema uses.
         for (uuid, dir) in extension_schema_dirs() {
             let source = match SettingsSchemaSource::from_directory(&dir, default.as_ref(), false) {
                 Ok(s) => s,
@@ -174,18 +188,15 @@ impl Index {
             };
             let (fixed, relocatable) = source.list_schemas(false);
             for id in fixed.iter().chain(relocatable.iter()) {
-                if let Some(schema) = source.lookup(id, false) {
-                    push(&mut entries, schema, Origin::Extension { uuid: uuid.clone(), dir: dir.clone() });
+                if !id.starts_with(EXTENSION_NAMESPACE) {
+                    continue;
                 }
-            }
-        }
-
-        if let Some(source) = &default {
-            let (fixed, relocatable) = source.list_schemas(true);
-            for id in fixed.iter().chain(relocatable.iter()) {
-                if let Some(schema) = source.lookup(id, true) {
-                    push(&mut entries, schema, Origin::System);
+                let Some(schema) = source.lookup(id, false) else { continue };
+                let path = schema.path();
+                if path.is_some() && entries.iter().any(|e| e.schema.path() == path) {
+                    continue;
                 }
+                push(&mut entries, schema, Origin::Extension { uuid: uuid.clone(), dir: dir.clone() });
             }
         }
 
@@ -230,6 +241,8 @@ impl Index {
 
 /// `(uuid, schemas dir)` for every installed extension that ships schemas,
 /// user extensions (`$XDG_DATA_HOME`) before system ones (`$XDG_DATA_DIRS`).
+/// Directories whose `metadata.json` uuid isn't the directory name are
+/// skipped, as GNOME Shell skips them.
 fn extension_schema_dirs() -> Vec<(String, PathBuf)> {
     let mut bases = vec![glib::user_data_dir()];
     bases.extend(glib::system_data_dirs());
@@ -239,7 +252,7 @@ fn extension_schema_dirs() -> Vec<(String, PathBuf)> {
         let mut found: Vec<(String, PathBuf)> = dir
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| has_compiled_schemas(p))
+            .filter(|p| has_compiled_schemas(p) && crate::ext::metadata_matching_dir(p).is_some())
             .filter_map(|p| Some((p.file_name()?.to_str()?.to_string(), p.join("schemas"))))
             .collect();
         found.sort();

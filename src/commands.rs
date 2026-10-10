@@ -42,9 +42,11 @@ fn key_json(entry: &Entry, key: &SettingsSchemaKey, settings: Option<&gio::Setti
         "range": range_json(key),
         "default": to_json(&key.default_value()),
     });
-    let guard = guard::check_at(&entry.id(), path, &name);
+    let guard = guard::check_entry(entry, path, &name);
     out["guarded"] = guard.map(|g| g.reason).into();
     out["executes"] = guard.is_some_and(|g| g.executes).into();
+    // Says whether the summary and description come from an extension.
+    out["origin"] = entry.origin.to_json();
     if let Some(s) = settings {
         let o = out.as_object_mut().unwrap();
         o.insert("value".into(), to_json(&s.value(&name)));
@@ -236,7 +238,7 @@ pub(crate) fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action
     if !settings.is_writable(key) {
         return Err(Error::NotWritable { schema, key: key.to_string() });
     }
-    let guarded = guard::check_at(&schema, opts.path, key);
+    let guarded = guard::check_entry(entry, opts.path, key);
     let mut out = json!({
         "schema": schema,
         "path": opts.path,
@@ -363,7 +365,7 @@ pub fn revert(index: &Index, id: &str, force: bool, dry_run: bool, yes: bool) ->
     let prepared = target.iter().rev().map(|e| prepare_revert(index, e, force)).collect::<Result<Vec<_>>>()?;
     if !dry_run && !yes {
         for p in prepared.iter().filter(|p| !p.targeted) {
-            if let Some(reason) = guard::check_at(&p.entry.id(), p.path.as_deref(), &p.key).map(|g| g.reason) {
+            if let Some(reason) = guard::check_entry(p.entry, p.path.as_deref(), &p.key).map(|g| g.reason) {
                 return Err(Error::Guarded { schema: p.entry.id(), key: p.key.clone(), reason: reason.to_string() });
             }
         }

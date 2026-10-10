@@ -465,7 +465,7 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
         .iter()
         .chain(&pruned)
         .filter_map(|p| {
-            guard::check_at(&p.entry.id(), p.path.as_deref(), &p.key).map(|g| {
+            guard::check_entry(p.entry, p.path.as_deref(), &p.key).map(|g| {
                 json!({ "schema": p.entry.id(), "path": p.path, "key": p.key, "reason": g.reason, "executes": g.executes })
             })
         })

@@ -141,6 +141,13 @@ pub fn check_at(schema: &str, path: Option<&str>, key: &str) -> Option<Guard> {
     find(schema, key).or_else(|| find(&schema_id_for_path(path?), key))
 }
 
+/// The guard on writing `key` of an indexed schema at `path` (`None` for a
+/// fixed schema, whose own path is then checked too). What every write uses.
+pub fn check_entry(entry: &crate::index::Entry, path: Option<&str>, key: &str) -> Option<Guard> {
+    let fixed = entry.schema.path();
+    check_at(&entry.id(), path.or(fixed.as_deref()), key)
+}
+
 /// The schema id GNOME's convention gives the schema at a dconf path:
 /// `/org/gnome/desktop/a11y/keyboard/` → `org.gnome.desktop.a11y.keyboard`.
 fn schema_id_for_path(path: &str) -> String {

@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use crate::commands::{self, Action, Tags, WriteOpts, write};
 use crate::error::{Error, Result};
 use crate::index::Index;
-use crate::journal;
+use crate::{fsutil, journal};
 
 const SHELL: &str = "org.gnome.shell";
 const ENABLED: &str = "enabled-extensions";
@@ -75,18 +75,29 @@ pub fn installed() -> Vec<Extension> {
 }
 
 /// Dotted string literals (`'a.b.c'`) in the extension's `.js` files, a few
-/// directory levels deep.
+/// directory levels deep. Only real directories and regular files count:
+/// symlinks aren't followed, FIFOs and other special files are skipped, and
+/// the number of entries and the size of each file are capped.
 fn js_string_literals(dir: &Path) -> Vec<String> {
+    const MAX_ENTRIES: usize = 5000;
     let mut out = Vec::new();
+    let mut seen = 0;
     let mut stack = vec![(dir.to_path_buf(), 0)];
     while let Some((d, depth)) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&d) else { continue };
         for e in entries.filter_map(|e| e.ok()) {
+            seen += 1;
+            if seen > MAX_ENTRIES {
+                return out;
+            }
+            // DirEntry::file_type doesn't follow symlinks.
+            let Ok(ft) = e.file_type() else { continue };
             let p = e.path();
-            if p.is_dir() && depth < 3 {
+            if ft.is_dir() && depth < 3 {
                 stack.push((p, depth + 1));
-            } else if p.extension().is_some_and(|x| x == "js")
-                && let Ok(text) = std::fs::read_to_string(&p)
+            } else if ft.is_file()
+                && p.extension().is_some_and(|x| x == "js")
+                && let Some(text) = fsutil::read_small(&p)
             {
                 for quote in ['\'', '"'] {
                     for (i, part) in text.split(quote).enumerate() {
@@ -106,11 +117,19 @@ fn js_string_literals(dir: &Path) -> Vec<String> {
 }
 
 fn load(dir: &Path, user: bool) -> Option<Extension> {
-    let text = std::fs::read_to_string(dir.join("metadata.json")).ok()?;
-    let metadata: Value = serde_json::from_str(&text).ok()?;
-    let uuid =
-        metadata["uuid"].as_str().map(str::to_string).or_else(|| Some(dir.file_name()?.to_str()?.to_string()))?;
+    let metadata = metadata_matching_dir(dir)?;
+    let uuid = metadata["uuid"].as_str()?.to_string();
     Some(Extension { uuid, dir: dir.to_path_buf(), user, metadata })
+}
+
+/// An extension directory's `metadata.json`, if it's a small regular file
+/// whose `uuid` is the directory's name. GNOME Shell refuses an extension
+/// whose uuid doesn't match its directory, so gsctl ignores it too.
+pub(crate) fn metadata_matching_dir(dir: &Path) -> Option<Value> {
+    let text = fsutil::read_small(&dir.join("metadata.json"))?;
+    let metadata: Value = serde_json::from_str(&text).ok()?;
+    let name = dir.file_name()?.to_str()?;
+    (metadata["uuid"].as_str() == Some(name)).then_some(metadata)
 }
 
 struct ShellState {
