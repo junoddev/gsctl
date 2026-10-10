@@ -71,8 +71,8 @@ fn key_brief(entry: &Entry, key: &SettingsSchemaKey, settings: Option<&gio::Sett
         out["is_default"] = s.user_value(&name).is_none().into();
     }
     out["summary"] = key.summary().map(|s| s.to_string()).into();
-    if let Some(reason) = guard::check(&entry.id(), &name) {
-        out["guarded"] = reason.into();
+    if let Some(g) = guard::check_entry(entry, None, &name) {
+        out["guarded"] = g.reason.into();
     }
     out
 }
@@ -304,7 +304,7 @@ fn key_hit(entry: &Entry, key: &SettingsSchemaKey) -> Value {
         "value": settings.as_ref().map_or(Value::Null, |s| truncated(to_json(&s.value(&name)))),
         "default": truncated(to_json(&default)),
         "range": range_json(key),
-        "guarded": guard::check(&id, &name),
+        "guarded": guard::check_entry(entry, None, &name).map(|g| g.reason),
         "relocatable": entry.relocatable(),
         "origin": entry.origin.to_json(),
     })

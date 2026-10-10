@@ -311,6 +311,45 @@ fn extension_schemas_cannot_shadow_system_ones() {
     assert_eq!(own["origin"]["uuid"], "shadow@gsctl.test");
 }
 
+const COMMAND_XML: &str = r#"<schemalist>
+  <schema id="org.gnome.shell.extensions.runner" path="/org/gnome/shell/extensions/runner/">
+    <key name="click-command" type="s"><default>''</default><summary>Run on click</summary></key>
+    <key name="exec-list" type="as"><default>[]</default><summary>Programs</summary></key>
+    <key name="use-command" type="b"><default>false</default><summary>Use the command</summary></key>
+    <key name="label" type="s"><default>''</default><summary>Label</summary></key>
+  </schema>
+</schemalist>"#;
+
+#[test]
+fn extension_keys_named_like_commands_need_yes() {
+    let env = TestEnv::new();
+    fake_extension(&env, "runner@gsctl.test", "runner@gsctl.test", COMMAND_XML);
+    let ext = "org.gnome.shell.extensions.runner";
+    for (key, value) in [("click-command", "touch x"), ("exec-list", r#"["touch"]"#)] {
+        let dry = env.gsctl(&["set", ext, key, value, "--dry-run"]).ok();
+        assert_eq!(dry["requires_yes"], true, "{dry}");
+        assert_eq!(dry["executes"], true, "{dry}");
+        assert_eq!(env.gsctl(&["set", ext, key, value]).status, 6);
+        assert_eq!(env.gsctl(&["schema", ext, key]).ok()["executes"], true);
+    }
+    for (key, value) in [("use-command", "true"), ("label", "x")] {
+        assert_eq!(env.gsctl(&["set", ext, key, value, "--dry-run"]).ok()["requires_yes"], false, "{key}");
+    }
+    // Listings and search say so too.
+    let brief = env.gsctl(&["schema", ext]).ok();
+    let guarded: Vec<&str> = brief["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|k| k["guarded"].is_string())
+        .map(|k| k["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(guarded, ["click-command", "exec-list"]);
+    let hits = env.gsctl(&["search", "run on click"]).ok();
+    let hit = hits["results"].as_array().unwrap().iter().find(|h| h["key"] == "click-command").expect("hit");
+    assert!(hit["guarded"].is_string(), "{hit}");
+}
+
 #[test]
 fn extensions_whose_uuid_does_not_match_their_dir_are_skipped() {
     let env = TestEnv::new();

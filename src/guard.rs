@@ -6,6 +6,9 @@
 //! conventionally lives at that path (`/org/gnome/desktop/a11y/keyboard/` →
 //! `org.gnome.desktop.a11y.keyboard`), and `--path` can't point at an
 //! installed fixed schema's path at all (see `Entry::settings`).
+//!
+//! Extension keys that look like commands are guarded by name and type,
+//! since no list can cover every extension.
 
 use serde_json::{Value, json};
 
@@ -43,6 +46,16 @@ const RULES: &[Rule] = &[
     runs("org.gnome.Ptyxis.Profile", Some("custom-command"), "runs this command in the profile's terminals"),
     runs("org.gnome.Ptyxis.Profile", Some("use-custom-command"), "runs the profile's custom command in its terminals"),
     runs("org.gnome.desktop.default-applications.terminal", Some("exec*"), "chooses the program run as the terminal"),
+    runs(
+        "org.gnome.desktop.default-applications.",
+        Some("exec*"),
+        "chooses the program run as this default application",
+    ),
+    runs(
+        "org.gnome.evolution-data-server.calendar",
+        Some("notify-programs"),
+        "lists programs that calendar reminders may run",
+    ),
     runs("org.gnome.desktop.media-handling", Some("autorun-*"), "chooses programs run when media is inserted"),
     runs("org.gnome.desktop.screensaver", Some("logout-command"), "runs this command to log out"),
     runs(
@@ -108,6 +121,23 @@ impl Guard {
     }
 }
 
+/// Reason for the extension-key heuristic.
+const EXTENSION_COMMAND: &str = "an extension key named like a command; the extension may run its value";
+
+/// Extension keys that look like they hold a command: a string or string
+/// list named `*command*` or `exec*`, in an extension schema (or one at an
+/// extension's conventional path). A heuristic: extensions don't declare
+/// which keys they run.
+fn extension_command(schema: &str, path: Option<&str>, key: &str, ty: &str, from_extension: bool) -> Option<Guard> {
+    const NAMESPACE: &str = "org.gnome.shell.extensions.";
+    let in_namespace = |id: &str| id.starts_with(NAMESPACE);
+    let extension =
+        from_extension || in_namespace(schema) || path.is_some_and(|p| in_namespace(&schema_id_for_path(p)));
+    let named = key.contains("command") || key.starts_with("exec");
+    let text = matches!(ty, "s" | "ms" | "as");
+    (extension && named && text).then_some(Guard { reason: EXTENSION_COMMAND, executes: true })
+}
+
 fn find(schema: &str, key: &str) -> Option<Guard> {
     RULES
         .iter()
@@ -141,11 +171,21 @@ pub fn check_at(schema: &str, path: Option<&str>, key: &str) -> Option<Guard> {
     find(schema, key).or_else(|| find(&schema_id_for_path(path?), key))
 }
 
+/// [`check_at`], then the extension-command heuristic for a key of type
+/// `ty` (a GVariant type string) in a schema that may come from an extension.
+pub fn check_typed(schema: &str, path: Option<&str>, key: &str, ty: &str, from_extension: bool) -> Option<Guard> {
+    check_at(schema, path, key).or_else(|| extension_command(schema, path, key, ty, from_extension))
+}
+
 /// The guard on writing `key` of an indexed schema at `path` (`None` for a
-/// fixed schema, whose own path is then checked too). What every write uses.
+/// fixed schema, whose own path is then checked too). What every write and
+/// listing uses.
 pub fn check_entry(entry: &crate::index::Entry, path: Option<&str>, key: &str) -> Option<Guard> {
     let fixed = entry.schema.path();
-    check_at(&entry.id(), path.or(fixed.as_deref()), key)
+    let ty =
+        if entry.schema.has_key(key) { entry.schema.key(key).value_type().as_str().to_string() } else { String::new() };
+    let from_extension = matches!(entry.origin, crate::index::Origin::Extension { .. });
+    check_typed(&entry.id(), path.or(fixed.as_deref()), key, &ty, from_extension)
 }
 
 /// Whether a key of type `ty` (a GVariant type string) holds a secret, like
@@ -164,7 +204,7 @@ fn schema_id_for_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{check, check_at, find};
+    use super::{check, check_at, check_typed, find};
 
     #[test]
     fn guarded_keys() {
@@ -202,6 +242,10 @@ mod tests {
             ("org.gnome.Ptyxis.Profile", "use-custom-command"),
             ("org.gnome.desktop.default-applications.terminal", "exec"),
             ("org.gnome.desktop.default-applications.terminal", "exec-arg"),
+            ("org.gnome.desktop.default-applications.office.calendar", "exec"),
+            ("org.gnome.desktop.default-applications.office.tasks", "exec"),
+            ("org.gnome.desktop.default-applications.anything-new", "exec-whatever"),
+            ("org.gnome.evolution-data-server.calendar", "notify-programs"),
             ("org.gnome.desktop.media-handling", "autorun-x-content-start-app"),
             ("org.gnome.desktop.media-handling", "autorun-never"),
             ("org.gnome.shell", "development-tools"),
@@ -225,6 +269,31 @@ mod tests {
         assert!(check("org.gnome.shell", "favorite-apps").is_none());
         assert!(check("org.gnome.desktop.input-sources-extra", "x").is_none());
         assert!(check("org.gnome.desktop.a11yish", "x").is_none());
+        assert!(check("org.gnome.desktop.default-applications.office.calendar", "needs-term").is_none());
+        assert!(check("org.gnome.evolution-data-server.calendar", "notify-enable-audio").is_none());
+    }
+
+    #[test]
+    fn extension_keys_named_like_commands() {
+        let ext = "org.gnome.shell.extensions.demo";
+        for (key, ty) in [("launch-command", "s"), ("commands", "as"), ("exec", "s"), ("exec-on-click", "ms")] {
+            let g = check_typed(ext, None, key, ty, false).expect(key);
+            assert!(g.executes, "{key}");
+        }
+        // Not text, or not named like a command.
+        assert!(check_typed(ext, None, "use-custom-command", "b", false).is_none());
+        assert!(check_typed(ext, None, "command-count", "i", false).is_none());
+        assert!(check_typed(ext, None, "label", "s", false).is_none());
+        assert!(check_typed(ext, None, "executable-bit", "b", false).is_none());
+        // Outside the extension namespace only if it came from an extension
+        // or is written at an extension's path.
+        assert!(check_typed("org.example.app", None, "command", "s", false).is_none());
+        assert!(check_typed("org.example.app", None, "command", "s", true).is_some());
+        let at = Some("/org/gnome/shell/extensions/demo/");
+        assert!(check_typed("org.example.reloc", at, "command", "s", false).is_some());
+        // Listed rules win over the heuristic.
+        let g = check_typed("org.gnome.desktop.default-applications.terminal", None, "exec", "s", false).unwrap();
+        assert_eq!(g.reason, "chooses the program run as the terminal");
     }
 
     #[test]
