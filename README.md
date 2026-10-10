@@ -221,6 +221,34 @@ Conventions:
 - Writes are read back, and gsctl fails if GSettings silently dropped them.
 - Without a session bus (in a sandbox, for example), every write fails with
   `no_session` instead of appearing to succeed.
+- Secret values (proxy passwords) are redacted in output as
+  `{"redacted": true}` unless you pass `--show-secrets`, and never exported or
+  journaled.
+
+## Safety
+
+gsctl trusts you: it makes changes visible (`--dry-run`, the journal) and
+undoable (`revert`), and asks for `--yes` only on keys that can lock you out
+or run code. It isn't a sandbox; anything running as you can call
+`dconf write`. For an agent, the real gate is the agent's own permissions.
+In Claude Code, this makes every `--yes` ask you first and refuses direct
+dconf/gsettings writes:
+
+```json
+{
+  "permissions": {
+    "ask": ["Bash(gsctl * --yes)", "Bash(gsctl * --yes *)"],
+    "deny": [
+      "Bash(dconf write *)", "Bash(dconf load *)", "Bash(dconf reset *)",
+      "Bash(gsettings set *)", "Bash(gsettings reset *)", "Bash(gsettings reset-recursively *)"
+    ]
+  }
+}
+```
+
+Pattern rules are best-effort (`sh -c` or a full path gets around them). See
+[SECURITY.md](SECURITY.md) for the full stance, the recommended setup and
+how to report a vulnerability.
 
 ## Agent skill
 

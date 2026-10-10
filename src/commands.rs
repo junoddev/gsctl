@@ -47,11 +47,15 @@ fn key_json(entry: &Entry, key: &SettingsSchemaKey, settings: Option<&gio::Setti
     let guard = guard::check_entry(entry, path, &name);
     out["guarded"] = guard.map(|g| g.reason).into();
     out["executes"] = guard.is_some_and(|g| g.executes).into();
+    if let Some(min) = guard.and_then(|g| g.below) {
+        // Only values below this need --yes.
+        out["guarded_below"] = min.into();
+    }
     // Says whether the summary and description come from an extension.
     out["origin"] = entry.origin.to_json();
     if let Some(s) = settings {
         let o = out.as_object_mut().unwrap();
-        o.insert("value".into(), to_json(&s.value(&name)));
+        o.insert("value".into(), guard::shown(&name, &s.value(&name)));
         o.insert("is_default".into(), s.user_value(&name).is_none().into());
         // The effective default includes vendor overrides (e.g. Ubuntu's).
         if let Some(d) = s.default_value(&name) {
@@ -67,12 +71,12 @@ fn key_brief(entry: &Entry, key: &SettingsSchemaKey, settings: Option<&gio::Sett
     let name = key.name();
     let mut out = json!({ "key": name.as_str(), "type": key.value_type().as_str() });
     if let Some(s) = settings {
-        out["value"] = truncated(to_json(&s.value(&name)));
+        out["value"] = truncated(guard::shown(&name, &s.value(&name)));
         out["is_default"] = s.user_value(&name).is_none().into();
     }
     out["summary"] = key.summary().map(|s| s.to_string()).into();
-    if let Some(reason) = guard::check(&entry.id(), &name) {
-        out["guarded"] = reason.into();
+    if let Some(g) = guard::check_entry(entry, None, &name) {
+        out["guarded"] = g.reason.into();
     }
     out
 }
@@ -301,10 +305,10 @@ fn key_hit(entry: &Entry, key: &SettingsSchemaKey) -> Value {
         "type": key.value_type().as_str(),
         "summary": key.summary().map(|s| s.to_string()).unwrap_or_default(),
         "description": key.description().map(|s| trim_text(&s, DESCRIPTION_CHARS)),
-        "value": settings.as_ref().map_or(Value::Null, |s| truncated(to_json(&s.value(&name)))),
+        "value": settings.as_ref().map_or(Value::Null, |s| truncated(guard::shown(&name, &s.value(&name)))),
         "default": truncated(to_json(&default)),
         "range": range_json(key),
-        "guarded": guard::check(&id, &name),
+        "guarded": guard::check_entry(entry, None, &name).map(|g| g.reason),
         "relocatable": entry.relocatable(),
         "origin": entry.origin.to_json(),
     })
@@ -337,7 +341,7 @@ pub fn get(index: &Index, schema: &str, key: &str, path: Option<&str>) -> Result
         "path": path,
         "key": key,
         "type": k.value_type().as_str(),
-        "value": to_json(&settings.value(key)),
+        "value": guard::shown(key, &settings.value(key)),
         "is_default": settings.user_value(key).is_none(),
     }))
 }
@@ -431,14 +435,14 @@ pub(crate) fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action
     if !settings.is_writable(key) {
         return Err(Error::NotWritable { schema, key: key.to_string() });
     }
-    let guarded = guard::check_entry(entry, opts.path, key);
+    let guarded = guard::check_write(entry, opts.path, key, &new);
     let mut out = json!({
         "schema": schema,
         "path": opts.path,
         "key": key,
         "op": op,
-        "old": to_json(&old),
-        "new": to_json(&new),
+        "old": guard::shown(key, &old),
+        "new": guard::shown(key, &new),
         "changed": old != new || (is_reset && old_user.is_some()),
         "dry_run": opts.dry_run,
     });
@@ -478,10 +482,10 @@ pub(crate) fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action
         return Err(Error::Internal(format!(
             "the {op} did not take effect: {schema} {key} still reads {}. Is dconf-service reachable on the \
              session bus (DBUS_SESSION_BUS_ADDRESS)?",
-            to_json(&now)
+            guard::shown(key, &now)
         )));
     }
-    out["value"] = to_json(&now);
+    out["value"] = guard::shown(key, &now);
     let change = journal::Change {
         op,
         schema: &schema,
@@ -672,7 +676,7 @@ pub fn revert(index: &Index, id: &str, force: bool, dry_run: bool, yes: bool) ->
         if !yes {
             for p in prepared.iter().filter(|p| !p.targeted) {
                 if let Some(reason) =
-                    guard::check_entry(p.item.entry, p.item.path.as_deref(), &p.item.key).map(|g| g.reason)
+                    guard::check_write(p.item.entry, p.item.path.as_deref(), &p.item.key, &p.after).map(|g| g.reason)
                 {
                     let (schema, key) = (p.item.entry.id(), p.item.key.clone());
                     return Err(Error::Guarded { schema, key, reason: reason.to_string() });
@@ -700,6 +704,8 @@ struct PreparedRevert<'a> {
     /// so the revert doesn't need it either. Judged from the values, never
     /// from the journal's `op`, which could be forged.
     targeted: bool,
+    /// The value the key will have after the revert.
+    after: glib::Variant,
 }
 
 const SHELL_SCHEMA: &str = "org.gnome.shell";
@@ -770,11 +776,11 @@ fn prepare_revert<'a>(index: &'a Index, e: &Value, force: bool) -> Result<Prepar
             Action::Set(v)
         }
     };
+    let after = match &action {
+        Action::Set(v) => v.clone(),
+        Action::Reset => settings.default_value(key).unwrap_or_else(|| k.default_value()),
+    };
     let targeted = path.is_none() && schema == SHELL_SCHEMA && EXTENSION_LISTS.contains(&key) && {
-        let after = match &action {
-            Action::Set(v) => v.clone(),
-            Action::Reset => settings.default_value(key).unwrap_or_else(|| k.default_value()),
-        };
         // Only a revert that turns one extension off: re-enabling runs its
         // code, so that needs --yes like `ext enable`.
         let len = |v: &glib::Variant| v.get::<Vec<String>>().map_or(0, |l| l.len());
@@ -790,7 +796,7 @@ fn prepare_revert<'a>(index: &'a Index, e: &Value, force: bool) -> Result<Prepar
         yes: false,
         reverts: Some(id.to_string()),
     };
-    Ok(PreparedRevert { item, targeted })
+    Ok(PreparedRevert { item, targeted, after })
 }
 
 fn read_journal() -> Result<Vec<Value>> {
@@ -827,7 +833,7 @@ pub fn changed(index: &Index, prefixes: &[String], include_state: bool) -> Resul
                 "path": path,
                 "key": name,
                 "type": user.type_().as_str(),
-                "value": to_json(&user),
+                "value": guard::shown(&name, &user),
                 "default": to_json(&default),
             });
             if let Some(reason) = state {

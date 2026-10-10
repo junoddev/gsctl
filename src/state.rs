@@ -428,8 +428,9 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
     check_areas(opts.areas.iter().map(String::as_str), "--area: ")?;
 
     for file in &state_files(opts.files)? {
-        let text =
-            fs::read_to_string(file).map_err(|e| Error::Usage(format!("cannot read {}: {e}", file.display())))?;
+        // No following a symlink, no blocking on a FIFO, and a size cap.
+        let text = crate::fsutil::read_small_or_why(file)
+            .map_err(|why| Error::Usage(format!("cannot read {}: {why}", file.display())))?;
         let doc: Value = serde_json::from_str(&text)
             .map_err(|e| Error::Usage(format!("{} is not valid JSON: {e}", file.display())))?;
         if doc["gsctl"].as_u64() != Some(FORMAT_VERSION) {
@@ -545,13 +546,13 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
         .iter()
         .chain(&pruned)
         .filter_map(|p| {
-            guard::check_entry(p.entry, p.path.as_deref(), &p.key).map(|g| {
+            guard::check_write(p.entry, p.path.as_deref(), &p.key, &p.value).map(|g| {
                 json!({ "schema": p.entry.id(), "path": p.path, "key": p.key, "reason": g.reason, "executes": g.executes })
             })
         })
         .collect();
     guarded.extend(unbacked_prunes(&all_file_areas, &listed, &pruned));
-    let change_json = |p: &Planned| json!({ "schema": p.entry.id(), "path": p.path, "key": p.key, "old": to_json(&p.old), "new": to_json(&p.value) });
+    let change_json = |p: &Planned| json!({ "schema": p.entry.id(), "path": p.path, "key": p.key, "old": guard::shown(&p.key, &p.old), "new": guard::shown(&p.key, &p.value) });
     let prune_json = |list: Vec<Value>| if opts.prune { Value::from(list) } else { Value::Null };
 
     if opts.dry_run {

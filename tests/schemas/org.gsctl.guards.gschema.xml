@@ -30,4 +30,24 @@
       <summary>HTTP proxy password</summary>
     </key>
   </schema>
+
+  <!-- Guarded only below a floor (delay < 100, repeat-interval < 10). -->
+  <schema id="org.gnome.desktop.peripherals.keyboard" path="/org/gnome/desktop/peripherals/keyboard/">
+    <key name="delay" type="u">
+      <default>500</default>
+      <summary>Initial key repeat delay</summary>
+    </key>
+    <key name="repeat-interval" type="u">
+      <default>30</default>
+      <summary>Key repeat interval</summary>
+    </key>
+  </schema>
+
+  <!-- Guarded always: hides alerts. -->
+  <schema id="org.gnome.desktop.notifications" path="/org/gnome/desktop/notifications/">
+    <key name="show-banners" type="b">
+      <default>true</default>
+      <summary>Show notification banners</summary>
+    </key>
+  </schema>
 </schemalist>

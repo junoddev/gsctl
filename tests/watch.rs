@@ -52,6 +52,17 @@ fn streams_changes_as_schema_and_key() {
 }
 
 #[test]
+fn secrets_are_redacted_unless_asked() {
+    let env = TestEnv::new();
+    let set = "set org.gnome.system.proxy.http authentication-password hunter2 --yes";
+    let events = watch_while(&env, "--schema org.gnome.system.proxy --count 1 --timeout 20", &[set]);
+    assert_eq!(events[1]["value"], serde_json::json!({"redacted": true}), "{events:?}");
+    let set = "set org.gnome.system.proxy.http authentication-password swordfish --yes";
+    let events = watch_while(&env, "--schema org.gnome.system.proxy --count 1 --timeout 20 --show-secrets", &[set]);
+    assert_eq!(events[1]["value"], "swordfish");
+}
+
+#[test]
 fn schema_filter() {
     let env = TestEnv::new();
     let events = watch_while(

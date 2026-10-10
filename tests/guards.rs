@@ -115,6 +115,56 @@ fn code_executing_keys_need_yes_and_say_so() {
     env.gsctl(&["set", CUSTOM, "command", "true", "--path", CUSTOM0, "--yes"]).ok();
 }
 
+const KEYBOARD: &str = "org.gnome.desktop.peripherals.keyboard";
+
+#[test]
+fn keyboard_repeat_is_guarded_only_below_a_floor() {
+    let env = TestEnv::new();
+    for (key, low, ok) in [("delay", "50", "250"), ("repeat-interval", "5", "25")] {
+        let dry = env.gsctl(&["set", KEYBOARD, key, low, "--dry-run"]).ok();
+        assert_eq!(dry["requires_yes"], true, "{dry}");
+        assert_eq!(dry["executes"], false);
+        let r = env.gsctl(&["set", KEYBOARD, key, low]);
+        assert_eq!(r.status, 6, "{}", r.stderr);
+        assert_eq!(env.gsctl(&["set", KEYBOARD, key, ok, "--dry-run"]).ok()["requires_yes"], false);
+        env.gsctl(&["set", KEYBOARD, key, ok]).ok();
+        // The listing says it's guarded, and where.
+        let k = env.gsctl(&["schema", KEYBOARD, key]).ok();
+        assert!(k["guarded"].is_string(), "{k}");
+        assert!(k["guarded_below"].is_u64(), "{k}");
+    }
+    assert_eq!(env.gsctl(&["get", KEYBOARD, "delay"]).ok()["value"], 250);
+
+    // Going low needs --yes; reverting back up doesn't.
+    env.gsctl(&["set", KEYBOARD, "delay", "50", "--yes"]).ok();
+    env.gsctl(&["revert", "last"]).ok();
+    assert_eq!(env.gsctl(&["get", KEYBOARD, "delay"]).ok()["value"], 250);
+    // Reverting the revert goes low again, so it does.
+    let undo = env.gsctl(&["history", "--limit", "1"]).ok();
+    let id = undo["entries"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(env.gsctl(&["revert", &id]).status, 6);
+
+    // apply judges the value too.
+    let low = write_json(&env, "low.json", &json!({"gsctl": 1, "settings": {KEYBOARD: {"delay": 20}}}));
+    let dry = env.gsctl(&["apply", &low, "--dry-run"]).ok();
+    assert_eq!(dry["requires_yes"][0]["key"], "delay", "{dry}");
+    assert_eq!(env.gsctl(&["apply", &low]).status, 6);
+    let fine = write_json(&env, "fine.json", &json!({"gsctl": 1, "settings": {KEYBOARD: {"delay": 400}}}));
+    assert_eq!(env.gsctl(&["apply", &fine, "--dry-run"]).ok()["requires_yes"], json!([]));
+    env.gsctl(&["apply", &fine]).ok();
+}
+
+#[test]
+fn hiding_notification_banners_needs_yes() {
+    let env = TestEnv::new();
+    let notifications = "org.gnome.desktop.notifications";
+    let dry = env.gsctl(&["set", notifications, "show-banners", "false", "--dry-run"]).ok();
+    assert_eq!(dry["requires_yes"], true, "{dry}");
+    assert!(dry["guarded"].as_str().unwrap().contains("gsctl"), "{dry}");
+    assert_eq!(env.gsctl(&["set", notifications, "show-banners", "false"]).status, 6);
+    env.gsctl(&["set", notifications, "show-banners", "false", "--yes"]).ok();
+}
+
 #[test]
 fn extension_lists_are_guarded_wholesale() {
     let env = TestEnv::new();
@@ -182,6 +232,47 @@ fn journal_is_private_and_not_followed_through_a_symlink() {
 }
 
 #[test]
+fn journal_and_its_dir_are_tightened_if_loose() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = TestEnv::new();
+    let journal = env.journal();
+    let dir = journal.parent().unwrap();
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(&journal, "").unwrap();
+    std::fs::set_permissions(&journal, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    env.gsctl(&["set", "org.gsctl.test", "count-i", "5"]).ok();
+    assert_eq!(mode(&journal), 0o600);
+    assert_eq!(mode(dir), 0o700);
+}
+
+#[test]
+fn apply_reads_only_small_regular_files() {
+    let env = TestEnv::new();
+    let doc = json!({"gsctl": 1, "area": "other", "settings": {"org.gsctl.test": {"count-i": 42}}});
+    let real = write_json(&env, "real.json", &doc);
+    let link = env.path("link.json");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let r = env.gsctl(&["apply", link.to_str().unwrap(), "--dry-run"]);
+    assert_eq!(r.status, 2, "{}", r.stderr);
+    assert!(r.error()["error"]["message"].as_str().unwrap().contains("symlink"), "{}", r.stderr);
+
+    // A FIFO must not block.
+    let fifo = env.path("fifo.json");
+    assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    let r = env.gsctl(&["apply", fifo.to_str().unwrap(), "--dry-run"]);
+    assert_eq!(r.status, 2, "{}", r.stderr);
+
+    let big = env.path("big.json");
+    std::fs::write(&big, format!("{{\"gsctl\": 1, \"pad\": \"{}\"}}", "x".repeat(2 << 20))).unwrap();
+    let r = env.gsctl(&["apply", big.to_str().unwrap(), "--dry-run"]);
+    assert_eq!(r.status, 2, "{}", r.stderr);
+    assert!(r.error()["error"]["message"].as_str().unwrap().contains("larger"), "{}", r.stderr);
+
+    env.gsctl(&["apply", &real, "--dry-run"]).ok();
+}
+
+#[test]
 fn export_out_writes_private_files_and_refuses_symlinks() {
     let env = TestEnv::new();
     env.gsctl(&["set", "org.gsctl.test", "count-i", "5"]).ok();
@@ -222,7 +313,7 @@ fn secrets_stay_out_of_the_journal_and_exports() {
     let r = env.gsctl(&["revert", "last", "--yes"]);
     assert_eq!(r.status, 2, "{}", r.stderr);
     assert!(r.error()["error"]["message"].as_str().unwrap().contains("secret"), "{}", r.stderr);
-    assert_eq!(env.gsctl(&["get", PROXY, "authentication-password"]).ok()["value"], "hunter2");
+    assert_eq!(env.gsctl(&["get", PROXY, "authentication-password", "--show-secrets"]).ok()["value"], "hunter2");
 
     for args in [vec!["export"], vec!["export", "--include-state"]] {
         let doc = env.gsctl(&args).ok();
@@ -232,6 +323,56 @@ fn secrets_stay_out_of_the_journal_and_exports() {
         let skipped = doc["skipped_state"].as_array().unwrap();
         assert!(skipped.iter().any(|s| s["key"] == "authentication-password" && s["reason"] == "secret"), "{doc}");
     }
+}
+
+#[test]
+fn secret_values_are_redacted_in_output() {
+    let env = TestEnv::new();
+    let redacted = json!({"redacted": true});
+    let pw = "authentication-password";
+    let out = env.gsctl(&["set", PROXY, pw, "hunter2", "--yes"]).ok();
+    assert_eq!(out["new"], redacted, "{out}");
+    assert_eq!(out["value"], redacted);
+    assert_eq!(out["old"], redacted, "even the old value");
+    let dry = env.gsctl(&["set", PROXY, pw, "other", "--dry-run"]).ok();
+    assert_eq!((&dry["old"], &dry["new"]), (&redacted, &redacted), "{dry}");
+    let reset = env.gsctl(&["reset", PROXY, pw, "--dry-run"]).ok();
+    assert_eq!(reset["old"], redacted);
+
+    let outputs = [
+        env.gsctl(&["get", PROXY, pw]),
+        env.gsctl(&["schema", PROXY, pw]),
+        env.gsctl(&["schema", PROXY]),
+        env.gsctl(&["schema", PROXY, "--full"]),
+        env.gsctl(&["changed"]),
+        env.gsctl(&["search", "proxy password"]),
+        env.gsctl(&["get", PROXY, pw, "--format", "text"]),
+        env.gsctl(&["changed", "--format", "text"]),
+    ];
+    for r in &outputs {
+        assert_eq!(r.status, 0, "{}", r.stderr);
+        assert!(!r.stdout.contains("hunter2"), "{}", r.stdout);
+    }
+    assert_eq!(outputs[0].json()["value"], redacted);
+    assert_eq!(outputs[1].json()["value"], redacted);
+    assert_eq!(outputs[6].stdout.trim(), "<redacted>");
+    assert!(outputs[7].stdout.contains("<redacted>"), "{}", outputs[7].stdout);
+
+    // apply shows neither side.
+    let doc = json!({"gsctl": 1, "area": "other", "settings": {PROXY: {pw: "from-a-file"}}});
+    let dry = env.gsctl(&["apply", &write_json(&env, "pw.json", &doc), "--dry-run"]).ok();
+    assert_eq!(dry["changes"][0]["old"], redacted, "{dry}");
+    assert_eq!(dry["changes"][0]["new"], redacted);
+
+    // --show-secrets opts out.
+    assert_eq!(env.gsctl(&["get", PROXY, pw, "--show-secrets"]).ok()["value"], "hunter2");
+    assert_eq!(env.gsctl(&["schema", PROXY, pw, "--show-secrets"]).ok()["value"], "hunter2");
+    let changed = env.gsctl(&["changed", "--show-secrets"]).ok();
+    assert!(changed.to_string().contains("hunter2"), "{changed}");
+    let dry = env.gsctl(&["set", PROXY, pw, "x", "--dry-run", "--show-secrets"]).ok();
+    assert_eq!((dry["old"].as_str(), dry["new"].as_str()), (Some("hunter2"), Some("x")));
+    // Only secrets are redacted.
+    assert_eq!(env.gsctl(&["get", PROXY, "host"]).ok()["value"], "");
 }
 
 // --- apply --prune -------------------------------------------------------------
@@ -309,6 +450,45 @@ fn extension_schemas_cannot_shadow_system_ones() {
     let own = env.gsctl(&["schema", "org.gnome.shell.extensions.shadow-own", "x"]).ok();
     assert_eq!(own["origin"]["type"], "extension");
     assert_eq!(own["origin"]["uuid"], "shadow@gsctl.test");
+}
+
+const COMMAND_XML: &str = r#"<schemalist>
+  <schema id="org.gnome.shell.extensions.runner" path="/org/gnome/shell/extensions/runner/">
+    <key name="click-command" type="s"><default>''</default><summary>Run on click</summary></key>
+    <key name="exec-list" type="as"><default>[]</default><summary>Programs</summary></key>
+    <key name="use-command" type="b"><default>false</default><summary>Use the command</summary></key>
+    <key name="label" type="s"><default>''</default><summary>Label</summary></key>
+  </schema>
+</schemalist>"#;
+
+#[test]
+fn extension_keys_named_like_commands_need_yes() {
+    let env = TestEnv::new();
+    fake_extension(&env, "runner@gsctl.test", "runner@gsctl.test", COMMAND_XML);
+    let ext = "org.gnome.shell.extensions.runner";
+    for (key, value) in [("click-command", "touch x"), ("exec-list", r#"["touch"]"#)] {
+        let dry = env.gsctl(&["set", ext, key, value, "--dry-run"]).ok();
+        assert_eq!(dry["requires_yes"], true, "{dry}");
+        assert_eq!(dry["executes"], true, "{dry}");
+        assert_eq!(env.gsctl(&["set", ext, key, value]).status, 6);
+        assert_eq!(env.gsctl(&["schema", ext, key]).ok()["executes"], true);
+    }
+    for (key, value) in [("use-command", "true"), ("label", "x")] {
+        assert_eq!(env.gsctl(&["set", ext, key, value, "--dry-run"]).ok()["requires_yes"], false, "{key}");
+    }
+    // Listings and search say so too.
+    let brief = env.gsctl(&["schema", ext]).ok();
+    let guarded: Vec<&str> = brief["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|k| k["guarded"].is_string())
+        .map(|k| k["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(guarded, ["click-command", "exec-list"]);
+    let hits = env.gsctl(&["search", "run on click"]).ok();
+    let hit = hits["results"].as_array().unwrap().iter().find(|h| h["key"] == "click-command").expect("hit");
+    assert!(hit["guarded"].is_string(), "{hit}");
 }
 
 #[test]

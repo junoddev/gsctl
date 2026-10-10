@@ -43,6 +43,9 @@ fn s(v: &Value) -> String {
 /// A value as people read it: strings quoted (`'prefer-dark'`, `''`), lists
 /// and maps in GVariant-like notation, everything escaped.
 pub fn value(v: &Value) -> String {
+    if *v == crate::guard::redacted() {
+        return "<redacted>".into();
+    }
     match v {
         Value::String(text) => quote(text),
         Value::Array(items) => format!("[{}]", items.iter().map(value).collect::<Vec<_>>().join(", ")),
@@ -750,6 +753,7 @@ mod tests {
         assert_eq!(value(&json!(1.0)), "1.0");
         assert_eq!(value(&json!(null)), "null");
         assert_eq!(value(&json!("\x1b]0;x")), "'\\u{1b}]0;x'");
+        assert_eq!(value(&json!({"redacted": true})), "<redacted>");
     }
 
     #[test]
