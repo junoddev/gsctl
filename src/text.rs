@@ -23,6 +23,10 @@ pub fn render(command: &str, out: &Value) -> String {
     match command {
         "search" => {
             for r in out["results"].as_array().into_iter().flatten() {
+                if r["kind"] == "extension" {
+                    line(format!("extension {}  # {}", s(&r["uuid"]), s(&r["name"])));
+                    continue;
+                }
                 line(format!(
                     "{} {} = {}  # {}",
                     s(&r["schema"]),

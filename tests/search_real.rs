@@ -36,7 +36,7 @@ const CASES: &[(&str, Want)] = &[
     ("turn off animations", Key(None, "enable-animations")),
 ];
 
-/// Extra keys that should at least be visible (top 10) for a query.
+/// Extra keys that should at least be visible (in the default 20 results).
 const VISIBLE: &[(&str, &str, &str)] = &[("font size", "org.gnome.desktop.interface", "font-name")];
 
 fn search(query: &str) -> Vec<Value> {
@@ -82,8 +82,8 @@ fn agent_queries_find_the_right_key() {
         let hits = search(query);
         let rank = hits.iter().position(|h| h["schema"] == *schema && h["key"] == *key).map(|i| i + 1);
         println!("| {query} (also {key}) | {} | |", rank.map_or("miss".to_string(), |r| r.to_string()));
-        if rank.is_none_or(|r| r > 10) {
-            failures.push(format!("{query}: {key} not in the top 10"));
+        if rank.is_none_or(|r| r > 20) {
+            failures.push(format!("{query}: {key} not in the default results"));
         }
     }
     assert!(failures.is_empty(), "outside the top 5: {failures:#?}");

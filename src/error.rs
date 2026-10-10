@@ -31,6 +31,9 @@ pub enum Error {
     Batch { message: String, exit: i32, problems: Value },
     #[error("{0}")]
     Internal(String),
+    /// A not-found error with suggestions; code and exit status are `inner`'s.
+    #[error("{inner}")]
+    Suggest { inner: Box<Error>, did_you_mean: Vec<String>, elsewhere: Vec<String> },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -50,6 +53,7 @@ impl Error {
             Error::Guarded { .. } => 6,
             Error::Conflict { .. } => 7,
             Error::Batch { exit, .. } => *exit,
+            Error::Suggest { inner, .. } => inner.exit_code(),
         }
     }
 
@@ -68,10 +72,21 @@ impl Error {
             Error::BindingNotFound(_) => "binding_not_found",
             Error::Conflict { .. } => "conflict",
             Error::Batch { .. } => "batch_invalid",
+            Error::Suggest { inner, .. } => inner.code(),
         }
     }
 
     pub fn to_json(&self) -> Value {
+        if let Error::Suggest { inner, did_you_mean, elsewhere } = self {
+            let mut out = inner.to_json();
+            if !did_you_mean.is_empty() {
+                out["error"]["did_you_mean"] = did_you_mean.clone().into();
+            }
+            if !elsewhere.is_empty() {
+                out["error"]["elsewhere"] = elsewhere.clone().into();
+            }
+            return out;
+        }
         let mut err = json!({
             "code": self.code(),
             "exit_code": self.exit_code(),
@@ -79,21 +94,24 @@ impl Error {
         });
         let extra = match self {
             Error::SchemaNotFound(schema) => {
-                json!({ "schema": schema, "hint": "try `gsctl search <words>` or `gsctl schema` to list schemas" })
+                json!({ "schema": schema, "hint": "try `gsctl search <words>` to find the schema and key" })
             }
             Error::KeyNotFound { schema, key } => {
-                json!({ "schema": schema, "key": key, "hint": format!("try `gsctl schema {schema}` to list its keys") })
+                let words = key.replace(['-', '_'], " ");
+                json!({ "schema": schema, "key": key, "hint": format!("try `gsctl search {words} --schema {schema}`") })
             }
             Error::InvalidValue { details, .. } => details.clone(),
             Error::NotWritable { schema, key } => json!({ "schema": schema, "key": key }),
             Error::Guarded { schema, key, reason } => json!({ "schema": schema, "key": key, "reason": reason }),
             Error::EntryNotFound(id) => json!({ "id": id, "hint": "see `gsctl history`" }),
-            Error::ExtensionNotFound(uuid) => json!({ "uuid": uuid, "hint": "see `gsctl ext list`" }),
+            Error::ExtensionNotFound(uuid) => {
+                json!({ "uuid": uuid, "hint": format!("try `gsctl search {uuid}` or `gsctl ext list`") })
+            }
             Error::BindingNotFound(what) => json!({ "binding": what, "hint": "see `gsctl keys list --custom`" }),
             Error::Conflict { id, .. } => json!({ "id": id }),
             Error::Batch { problems, .. } => json!({ "problems": problems }),
             Error::NoSession(reason) => json!({ "reason": reason, "hint": "run `gsctl doctor`" }),
-            Error::Usage(_) | Error::Internal(_) => Value::Null,
+            Error::Usage(_) | Error::Internal(_) | Error::Suggest { .. } => Value::Null,
         };
         if let (Value::Object(err), Value::Object(extra)) = (&mut err, extra) {
             err.extend(extra);
@@ -101,3 +119,20 @@ impl Error {
         json!({ "error": err })
     }
 }
+
+/// Every error code with its exit status and meaning, for `gsctl commands`.
+pub const CODES: &[(&str, i32, &str)] = &[
+    ("internal", 1, "unexpected failure"),
+    ("usage", 2, "bad command line (relocatable schemas need --path)"),
+    ("schema_not_found", 3, "no such schema; see did_you_mean or `gsctl search`"),
+    ("key_not_found", 3, "no such key in the schema; see did_you_mean and elsewhere"),
+    ("extension_not_found", 3, "no such installed extension"),
+    ("binding_not_found", 3, "no such custom keybinding"),
+    ("entry_not_found", 3, "no such journal entry or batch"),
+    ("invalid_value", 4, "value doesn't fit the key's type or range; read type, range and message"),
+    ("batch_invalid", 4, "apply found problems (exit is the first problem's); nothing was written"),
+    ("not_writable", 5, "key locked by the administrator"),
+    ("no_session", 5, "no session bus or dconf-service (sandboxed); nothing can be saved"),
+    ("guarded", 6, "guarded key: ask the user, then re-run with --yes"),
+    ("conflict", 7, "revert of a key changed since (needs --force), or accelerator already bound"),
+];

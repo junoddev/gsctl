@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use std::io::IsTerminal;
+
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use gsctl::commands::{self, WriteOpts};
 use gsctl::doctor;
 use gsctl::error::{Error, Result};
@@ -28,6 +30,15 @@ struct Cli {
     #[arg(long, global = true, value_enum, default_value_t = Format::Json)]
     format: Format,
 
+    /// Print JSON on one line. The default when stdout isn't a terminal
+    /// (or GSCTL_JSON=compact).
+    #[arg(long, global = true, conflicts_with = "pretty")]
+    compact: bool,
+
+    /// Pretty-print JSON. The default on a terminal (or GSCTL_JSON=pretty).
+    #[arg(long, global = true)]
+    pretty: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -51,31 +62,42 @@ enum Command {
         /// Only search this schema and the schemas below it (repeatable).
         #[arg(long)]
         schema: Vec<String>,
+        /// Rank schemas that don't apply to this desktop (Ubuntu Touch, Unity,
+        /// deprecated) like the others instead of last.
+        #[arg(long)]
+        all: bool,
     },
-    /// Describe a key (type, default, current value, allowed values), a whole
-    /// schema, or list every schema when called without arguments.
+    /// Describe a key (type, default, current value, allowed values), list a
+    /// schema's keys briefly, or list every schema when called without
+    /// arguments. SCHEMA KEY can also be one schema.key or /dconf/path/key.
     Schema {
         schema: Option<String>,
         key: Option<String>,
         /// Instance path for a relocatable schema, e.g. /org/gnome/.../custom0/.
         #[arg(long)]
         path: Option<String>,
+        /// Describe every key of the schema in full.
+        #[arg(long)]
+        full: bool,
     },
-    /// Print a key's current value.
+    /// Print a key's current value. SCHEMA KEY can also be one schema.key or
+    /// /dconf/path/key argument.
     Get {
         schema: String,
-        key: String,
+        key: Option<String>,
         /// Instance path for a relocatable schema.
         #[arg(long)]
         path: Option<String>,
     },
     /// Validate and write a value. VALUE is JSON (true, 42, "text", ["a","b"]),
     /// GVariant text (@as [], ('xkb', 'us')), or bare text for string keys.
+    /// SCHEMA KEY can also be one schema.key or /dconf/path/key argument.
     Set {
         schema: String,
+        #[arg(allow_negative_numbers = true)]
         key: String,
         #[arg(allow_hyphen_values = true)]
-        value: String,
+        value: Option<String>,
         /// Instance path for a relocatable schema.
         #[arg(long)]
         path: Option<String>,
@@ -89,7 +111,7 @@ enum Command {
     /// Reset a key to its default.
     Reset {
         schema: String,
-        key: String,
+        key: Option<String>,
         /// Instance path for a relocatable schema.
         #[arg(long)]
         path: Option<String>,
@@ -189,11 +211,19 @@ enum Command {
         yes: bool,
     },
     /// List keys whose value differs from the default: what was customised.
+    /// App state (counters, timestamps, window geometry) is left out unless
+    /// --include-state.
     Changed {
         /// Only this schema and the schemas below it (repeatable).
         #[arg(long)]
         schema: Vec<String>,
+        /// Also list keys that look like app state, marked with "state".
+        #[arg(long)]
+        include_state: bool,
     },
+    /// Machine-readable list of every command, argument and flag, plus exit
+    /// and error codes (also `gsctl help --json`).
+    Commands,
 }
 
 #[derive(Subcommand)]
@@ -255,25 +285,54 @@ enum KeysCommand {
 /// The JSON document to print, or `None` for streaming commands that print
 /// their own output.
 fn run(cli: &Cli) -> Result<Option<Value>> {
+    if let Command::Commands = cli.command {
+        return Ok(Some(commands_json()));
+    }
     let index = Index::load()?;
     if let Command::Watch { schema, count, timeout } = &cli.command {
         return watch::watch(&index, &WatchOpts { prefixes: schema, count: *count, timeout: *timeout });
     }
     match &cli.command {
-        Command::Search { query, limit, schema } => commands::search(&index, &query.join(" "), *limit, schema),
-        Command::Schema { schema, key, path } => {
-            commands::schema(&index, schema.as_deref(), key.as_deref(), path.as_deref())
+        Command::Search { query, limit, schema, all } => {
+            let opts = commands::SearchOpts { limit: *limit, prefixes: schema, all: *all };
+            commands::search(&index, &query.join(" "), &opts)
         }
-        Command::Get { schema, key, path } => commands::get(&index, schema, key, path.as_deref()),
+        Command::Schema { schema, key, path, full } => {
+            // One schema.key or /dconf/path/key argument.
+            let split = match (schema, key) {
+                (Some(s), None) => commands::split_target(&index, s),
+                _ => None,
+            };
+            // Text output shows ranges and defaults, so it needs the full form.
+            let full = *full || matches!(cli.format, Format::Text);
+            match split {
+                Some((s, k, p)) => {
+                    commands::schema_with(&index, Some(&s), Some(&k), p.as_deref().or(path.as_deref()), full)
+                }
+                None => commands::schema_with(&index, schema.as_deref(), key.as_deref(), path.as_deref(), full),
+            }
+        }
+        Command::Get { schema, key, path } => {
+            let (s, k, p) = commands::target(&index, schema, key.as_deref(), path.as_deref())?;
+            commands::get(&index, &s, &k, p.as_deref())
+        }
         Command::Set { schema, key, value, path, dry_run, yes } => {
-            let opts = WriteOpts { path: path.as_deref(), dry_run: *dry_run, yes: *yes };
-            commands::set(&index, schema, key, value, &opts)
+            // `set schema.key VALUE`: the value arrives in KEY's place.
+            let (key, value) = match value {
+                Some(v) => (Some(key.as_str()), v),
+                None => (None, key),
+            };
+            let (s, k, p) = commands::target(&index, schema, key, path.as_deref())?;
+            let opts = WriteOpts { path: p.as_deref(), dry_run: *dry_run, yes: *yes };
+            commands::set(&index, &s, &k, value, &opts)
         }
         Command::Reset { schema, key, path, dry_run, yes } => {
-            let opts = WriteOpts { path: path.as_deref(), dry_run: *dry_run, yes: *yes };
-            commands::reset(&index, schema, key, &opts)
+            let (s, k, p) = commands::target(&index, schema, key.as_deref(), path.as_deref())?;
+            let opts = WriteOpts { path: p.as_deref(), dry_run: *dry_run, yes: *yes };
+            commands::reset(&index, &s, &k, &opts)
         }
-        Command::Changed { schema } => commands::changed(&index, schema),
+        Command::Changed { schema, include_state } => commands::changed(&index, schema, *include_state),
+        Command::Commands => unreachable!("handled above"),
         Command::Export { area, out, include_state } => {
             let opts = ExportOpts { areas: area, out_dir: out.as_deref(), include_state: *include_state };
             state::export(&index, &opts)
@@ -329,6 +388,27 @@ fn command_name(c: &Command) -> &'static str {
         Command::Keys(KeysCommand::Remove { .. }) => "keys-remove",
         Command::History { .. } => "history",
         Command::Revert { .. } => "revert",
+        Command::Commands => "commands",
+    }
+}
+
+/// `gsctl commands` / `gsctl help --json`: the clap command tree as JSON.
+fn commands_json() -> Value {
+    let mut out = gsctl::help::tree(&Cli::command());
+    out["exit_codes"] = gsctl::help::exit_codes();
+    out["error_codes"] = gsctl::help::error_codes();
+    out
+}
+
+/// Compact JSON unless asked for pretty, or stdout is a terminal.
+fn pretty(cli: &Cli) -> bool {
+    if cli.pretty || cli.compact {
+        return cli.pretty;
+    }
+    match std::env::var("GSCTL_JSON").as_deref() {
+        Ok("pretty") => true,
+        Ok("compact") => false,
+        _ => std::io::stdout().is_terminal(),
     }
 }
 
@@ -338,6 +418,11 @@ fn fail(err: &Error) -> ExitCode {
 }
 
 fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args == ["help", "--json"] {
+        println!("{}", commands_json());
+        return ExitCode::SUCCESS;
+    }
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(e) if !e.use_stderr() => {
@@ -355,11 +440,12 @@ fn main() -> ExitCode {
         Ok(None) => ExitCode::SUCCESS,
         Ok(Some(out)) => {
             match cli.format {
-                Format::Json => println!("{}", serde_json::to_string_pretty(&out).unwrap()),
+                Format::Json if pretty(&cli) => println!("{}", serde_json::to_string_pretty(&out).unwrap()),
+                Format::Json => println!("{out}"),
                 Format::Text => print!("{}", gsctl::text::render(command_name(&cli.command), &out)),
             }
             ExitCode::SUCCESS
         }
-        Err(e) => fail(&e),
+        Err(e) => fail(&commands::with_suggestions(e)),
     }
 }
