@@ -47,6 +47,10 @@ fn key_json(entry: &Entry, key: &SettingsSchemaKey, settings: Option<&gio::Setti
     let guard = guard::check_entry(entry, path, &name);
     out["guarded"] = guard.map(|g| g.reason).into();
     out["executes"] = guard.is_some_and(|g| g.executes).into();
+    if let Some(min) = guard.and_then(|g| g.below) {
+        // Only values below this need --yes.
+        out["guarded_below"] = min.into();
+    }
     // Says whether the summary and description come from an extension.
     out["origin"] = entry.origin.to_json();
     if let Some(s) = settings {
@@ -431,7 +435,7 @@ pub(crate) fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action
     if !settings.is_writable(key) {
         return Err(Error::NotWritable { schema, key: key.to_string() });
     }
-    let guarded = guard::check_entry(entry, opts.path, key);
+    let guarded = guard::check_write(entry, opts.path, key, &new);
     let mut out = json!({
         "schema": schema,
         "path": opts.path,
@@ -672,7 +676,7 @@ pub fn revert(index: &Index, id: &str, force: bool, dry_run: bool, yes: bool) ->
         if !yes {
             for p in prepared.iter().filter(|p| !p.targeted) {
                 if let Some(reason) =
-                    guard::check_entry(p.item.entry, p.item.path.as_deref(), &p.item.key).map(|g| g.reason)
+                    guard::check_write(p.item.entry, p.item.path.as_deref(), &p.item.key, &p.after).map(|g| g.reason)
                 {
                     let (schema, key) = (p.item.entry.id(), p.item.key.clone());
                     return Err(Error::Guarded { schema, key, reason: reason.to_string() });
@@ -700,6 +704,8 @@ struct PreparedRevert<'a> {
     /// so the revert doesn't need it either. Judged from the values, never
     /// from the journal's `op`, which could be forged.
     targeted: bool,
+    /// The value the key will have after the revert.
+    after: glib::Variant,
 }
 
 const SHELL_SCHEMA: &str = "org.gnome.shell";
@@ -770,11 +776,11 @@ fn prepare_revert<'a>(index: &'a Index, e: &Value, force: bool) -> Result<Prepar
             Action::Set(v)
         }
     };
+    let after = match &action {
+        Action::Set(v) => v.clone(),
+        Action::Reset => settings.default_value(key).unwrap_or_else(|| k.default_value()),
+    };
     let targeted = path.is_none() && schema == SHELL_SCHEMA && EXTENSION_LISTS.contains(&key) && {
-        let after = match &action {
-            Action::Set(v) => v.clone(),
-            Action::Reset => settings.default_value(key).unwrap_or_else(|| k.default_value()),
-        };
         // Only a revert that turns one extension off: re-enabling runs its
         // code, so that needs --yes like `ext enable`.
         let len = |v: &glib::Variant| v.get::<Vec<String>>().map_or(0, |l| l.len());
@@ -790,7 +796,7 @@ fn prepare_revert<'a>(index: &'a Index, e: &Value, force: bool) -> Result<Prepar
         yes: false,
         reverts: Some(id.to_string()),
     };
-    Ok(PreparedRevert { item, targeted })
+    Ok(PreparedRevert { item, targeted, after })
 }
 
 fn read_journal() -> Result<Vec<Value>> {

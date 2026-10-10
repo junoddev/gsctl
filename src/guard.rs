@@ -7,7 +7,8 @@
 //! `org.gnome.desktop.a11y.keyboard`), and `--path` can't point at an
 //! installed fixed schema's path at all (see `Entry::settings`).
 //!
-//! Extension keys that look like commands are guarded by name and type,
+//! Some guards only apply below a floor (a key-repeat `delay` under 100 ms):
+//! see [`Guard::applies_to`]. Extension keys that look like commands are guarded by name and type,
 //! since no list can cover every extension.
 
 use serde_json::{Value, json};
@@ -20,14 +21,21 @@ struct Rule {
     reason: &'static str,
     /// The value is a command or code that gets run.
     executes: bool,
+    /// Only values below this need `--yes` (for integer keys).
+    below: Option<u32>,
 }
 
 const fn rule(schema: &'static str, key: Option<&'static str>, reason: &'static str) -> Rule {
-    Rule { schema, key, reason, executes: false }
+    Rule { schema, key, reason, executes: false, below: None }
 }
 
 const fn runs(schema: &'static str, key: Option<&'static str>, reason: &'static str) -> Rule {
-    Rule { schema, key, reason, executes: true }
+    Rule { schema, key, reason, executes: true, below: None }
+}
+
+/// Guarded only when the new value is below `min`.
+const fn floor(schema: &'static str, key: &'static str, min: u32, reason: &'static str) -> Rule {
+    Rule { schema, key: Some(key), reason, executes: false, below: Some(min) }
 }
 
 /// First match wins.
@@ -85,6 +93,21 @@ const RULES: &[Rule] = &[
     rule("org.gnome.desktop.screensaver", Some("lock-delay"), "changes how soon the session locks"),
     rule(
         "org.gnome.desktop.screensaver",
+        Some("ubuntu-lock-on-suspend"),
+        "changes whether the session locks on suspend",
+    ),
+    rule(
+        "org.gnome.desktop.screensaver",
+        Some("logout-enabled"),
+        "changes whether the unlock dialog offers logging out",
+    ),
+    rule(
+        "org.gnome.desktop.screensaver",
+        Some("user-switch-enabled"),
+        "changes whether the unlock dialog offers switching user",
+    ),
+    rule(
+        "org.gnome.desktop.screensaver",
         Some("idle-activation-enabled"),
         "changes whether the screen shield comes up when idle",
     ),
@@ -95,6 +118,25 @@ const RULES: &[Rule] = &[
     ),
     rule("org.gnome.desktop.lockdown", None, "lockdown settings can disable locking, logging out or other safeguards"),
     rule("org.gnome.desktop.a11y.", None, "accessibility settings can make input or the screen hard to use"),
+    rule(
+        "org.gnome.desktop.interface",
+        Some("toolkit-accessibility"),
+        "turning it off cuts screen readers and other assistive tools off from apps",
+    ),
+    floor(
+        "org.gnome.desktop.peripherals.keyboard",
+        "delay",
+        100,
+        "a key-repeat delay under 100 ms repeats keys before they can be released",
+    ),
+    floor(
+        "org.gnome.desktop.peripherals.keyboard",
+        "repeat-interval",
+        10,
+        "a key-repeat interval under 10 ms floods input with repeated keys",
+    ),
+    rule("org.gnome.desktop.peripherals.touchpad", Some("send-events"), "can turn the touchpad off"),
+    rule("org.gnome.desktop.notifications", Some("show-banners"), "hides alerts, including future gsctl notifications"),
     rule("org.gnome.system.proxy.", None, "proxy settings can send network traffic through another host"),
     rule(
         "org.gnome.settings-daemon.plugins.power",
@@ -113,11 +155,27 @@ pub struct Guard {
     /// The value is a command or code that gets run, so a change runs code
     /// chosen by whoever wrote the value.
     pub executes: bool,
+    /// Only new values below this need `--yes`.
+    pub below: Option<u32>,
 }
 
 impl Guard {
     pub fn to_json(&self) -> Value {
-        json!({ "reason": self.reason, "executes": self.executes })
+        let mut out = json!({ "reason": self.reason, "executes": self.executes });
+        if let Some(min) = self.below {
+            out["below"] = min.into();
+        }
+        out
+    }
+
+    /// Whether writing `new` needs `--yes`: always, unless the guard has a
+    /// floor and `new` is an integer at or above it.
+    pub fn applies_to(&self, new: &glib::Variant) -> bool {
+        let Some(min) = self.below else { return true };
+        match new.get::<u32>().map(i64::from).or_else(|| new.get::<i32>().map(i64::from)) {
+            Some(v) => v < i64::from(min),
+            None => true,
+        }
     }
 }
 
@@ -135,7 +193,7 @@ fn extension_command(schema: &str, path: Option<&str>, key: &str, ty: &str, from
         from_extension || in_namespace(schema) || path.is_some_and(|p| in_namespace(&schema_id_for_path(p)));
     let named = key.contains("command") || key.starts_with("exec");
     let text = matches!(ty, "s" | "ms" | "as");
-    (extension && named && text).then_some(Guard { reason: EXTENSION_COMMAND, executes: true })
+    (extension && named && text).then_some(Guard { reason: EXTENSION_COMMAND, executes: true, below: None })
 }
 
 fn find(schema: &str, key: &str) -> Option<Guard> {
@@ -155,7 +213,7 @@ fn find(schema: &str, key: &str) -> Option<Guard> {
             };
             schema_matches && key_matches
         })
-        .map(|r| Guard { reason: r.reason, executes: r.executes })
+        .map(|r| Guard { reason: r.reason, executes: r.executes, below: r.below })
 }
 
 /// Why `schema key` is guarded, or `None` if it isn't. Ignores the instance
@@ -179,13 +237,20 @@ pub fn check_typed(schema: &str, path: Option<&str>, key: &str, ty: &str, from_e
 
 /// The guard on writing `key` of an indexed schema at `path` (`None` for a
 /// fixed schema, whose own path is then checked too). What every write and
-/// listing uses.
+/// listing uses. A guard with a floor still needs [`Guard::applies_to`] for
+/// the value written: see [`check_write`].
 pub fn check_entry(entry: &crate::index::Entry, path: Option<&str>, key: &str) -> Option<Guard> {
     let fixed = entry.schema.path();
     let ty =
         if entry.schema.has_key(key) { entry.schema.key(key).value_type().as_str().to_string() } else { String::new() };
     let from_extension = matches!(entry.origin, crate::index::Origin::Extension { .. });
     check_typed(&entry.id(), path.or(fixed.as_deref()), key, &ty, from_extension)
+}
+
+/// The guard on writing `new` to `key`: [`check_entry`], unless `new`
+/// clears the guard's floor.
+pub fn check_write(entry: &crate::index::Entry, path: Option<&str>, key: &str, new: &glib::Variant) -> Option<Guard> {
+    check_entry(entry, path, key).filter(|g| g.applies_to(new))
 }
 
 /// Whether a key of type `ty` (a GVariant type string) holds a secret, like
@@ -205,6 +270,7 @@ fn schema_id_for_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{check, check_at, check_typed, find};
+    use glib::prelude::*;
 
     #[test]
     fn guarded_keys() {
@@ -228,6 +294,14 @@ mod tests {
             ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-battery-timeout"),
             ("org.gnome.shell", "disabled-extensions"),
             ("org.gnome.mutter.wayland", "xwayland-allow-grabs"),
+            ("org.gnome.desktop.screensaver", "ubuntu-lock-on-suspend"),
+            ("org.gnome.desktop.screensaver", "logout-enabled"),
+            ("org.gnome.desktop.screensaver", "user-switch-enabled"),
+            ("org.gnome.desktop.interface", "toolkit-accessibility"),
+            ("org.gnome.desktop.peripherals.touchpad", "send-events"),
+            ("org.gnome.desktop.notifications", "show-banners"),
+            ("org.gnome.desktop.peripherals.keyboard", "delay"),
+            ("org.gnome.desktop.peripherals.keyboard", "repeat-interval"),
         ] {
             assert!(!find(schema, key).expect(key).executes, "{schema} {key}");
         }
@@ -266,11 +340,37 @@ mod tests {
         assert!(check("org.gnome.mutter.wayland", "xwayland-scaling-factor").is_none());
         assert!(check("org.gnome.system.proxyish", "x").is_none());
         assert!(check("org.gnome.desktop.interface", "color-scheme").is_none());
+        assert!(check("org.gnome.desktop.peripherals.touchpad", "tap-to-click").is_none());
+        assert!(check("org.gnome.desktop.peripherals.keyboard", "repeat").is_none());
+        assert!(check("org.gnome.desktop.notifications", "show-in-lock-screen").is_none());
         assert!(check("org.gnome.shell", "favorite-apps").is_none());
         assert!(check("org.gnome.desktop.input-sources-extra", "x").is_none());
         assert!(check("org.gnome.desktop.a11yish", "x").is_none());
         assert!(check("org.gnome.desktop.default-applications.office.calendar", "needs-term").is_none());
         assert!(check("org.gnome.evolution-data-server.calendar", "notify-enable-audio").is_none());
+    }
+
+    #[test]
+    fn floors_guard_only_low_values() {
+        let delay = find("org.gnome.desktop.peripherals.keyboard", "delay").unwrap();
+        assert_eq!(delay.below, Some(100));
+        assert!(delay.applies_to(&50u32.to_variant()));
+        assert!(delay.applies_to(&0u32.to_variant()));
+        assert!(!delay.applies_to(&100u32.to_variant()));
+        assert!(!delay.applies_to(&500u32.to_variant()));
+        assert!(delay.applies_to(&(-1i32).to_variant()));
+        assert!(!delay.applies_to(&200i32.to_variant()));
+        // Not an integer: can't tell, so guarded.
+        assert!(delay.applies_to(&"x".to_variant()));
+        let interval = find("org.gnome.desktop.peripherals.keyboard", "repeat-interval").unwrap();
+        assert!(interval.applies_to(&9u32.to_variant()));
+        assert!(!interval.applies_to(&10u32.to_variant()));
+        // No floor: every value.
+        let lock = find("org.gnome.desktop.screensaver", "lock-enabled").unwrap();
+        assert!(lock.applies_to(&true.to_variant()));
+        assert_eq!(find("org.gnome.desktop.peripherals.keyboard", "repeat"), None);
+        assert_eq!(lock.to_json().get("below"), None);
+        assert_eq!(delay.to_json()["below"], 100);
     }
 
     #[test]

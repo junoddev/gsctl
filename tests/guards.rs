@@ -115,6 +115,56 @@ fn code_executing_keys_need_yes_and_say_so() {
     env.gsctl(&["set", CUSTOM, "command", "true", "--path", CUSTOM0, "--yes"]).ok();
 }
 
+const KEYBOARD: &str = "org.gnome.desktop.peripherals.keyboard";
+
+#[test]
+fn keyboard_repeat_is_guarded_only_below_a_floor() {
+    let env = TestEnv::new();
+    for (key, low, ok) in [("delay", "50", "250"), ("repeat-interval", "5", "25")] {
+        let dry = env.gsctl(&["set", KEYBOARD, key, low, "--dry-run"]).ok();
+        assert_eq!(dry["requires_yes"], true, "{dry}");
+        assert_eq!(dry["executes"], false);
+        let r = env.gsctl(&["set", KEYBOARD, key, low]);
+        assert_eq!(r.status, 6, "{}", r.stderr);
+        assert_eq!(env.gsctl(&["set", KEYBOARD, key, ok, "--dry-run"]).ok()["requires_yes"], false);
+        env.gsctl(&["set", KEYBOARD, key, ok]).ok();
+        // The listing says it's guarded, and where.
+        let k = env.gsctl(&["schema", KEYBOARD, key]).ok();
+        assert!(k["guarded"].is_string(), "{k}");
+        assert!(k["guarded_below"].is_u64(), "{k}");
+    }
+    assert_eq!(env.gsctl(&["get", KEYBOARD, "delay"]).ok()["value"], 250);
+
+    // Going low needs --yes; reverting back up doesn't.
+    env.gsctl(&["set", KEYBOARD, "delay", "50", "--yes"]).ok();
+    env.gsctl(&["revert", "last"]).ok();
+    assert_eq!(env.gsctl(&["get", KEYBOARD, "delay"]).ok()["value"], 250);
+    // Reverting the revert goes low again, so it does.
+    let undo = env.gsctl(&["history", "--limit", "1"]).ok();
+    let id = undo["entries"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(env.gsctl(&["revert", &id]).status, 6);
+
+    // apply judges the value too.
+    let low = write_json(&env, "low.json", &json!({"gsctl": 1, "settings": {KEYBOARD: {"delay": 20}}}));
+    let dry = env.gsctl(&["apply", &low, "--dry-run"]).ok();
+    assert_eq!(dry["requires_yes"][0]["key"], "delay", "{dry}");
+    assert_eq!(env.gsctl(&["apply", &low]).status, 6);
+    let fine = write_json(&env, "fine.json", &json!({"gsctl": 1, "settings": {KEYBOARD: {"delay": 400}}}));
+    assert_eq!(env.gsctl(&["apply", &fine, "--dry-run"]).ok()["requires_yes"], json!([]));
+    env.gsctl(&["apply", &fine]).ok();
+}
+
+#[test]
+fn hiding_notification_banners_needs_yes() {
+    let env = TestEnv::new();
+    let notifications = "org.gnome.desktop.notifications";
+    let dry = env.gsctl(&["set", notifications, "show-banners", "false", "--dry-run"]).ok();
+    assert_eq!(dry["requires_yes"], true, "{dry}");
+    assert!(dry["guarded"].as_str().unwrap().contains("gsctl"), "{dry}");
+    assert_eq!(env.gsctl(&["set", notifications, "show-banners", "false"]).status, 6);
+    env.gsctl(&["set", notifications, "show-banners", "false", "--yes"]).ok();
+}
+
 #[test]
 fn extension_lists_are_guarded_wholesale() {
     let env = TestEnv::new();
