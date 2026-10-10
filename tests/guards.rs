@@ -158,6 +158,39 @@ fn keys_add_needs_yes() {
     env.gsctl(&["keys", "remove", "Term"]).ok();
 }
 
+// --- apply --prune -------------------------------------------------------------
+
+#[test]
+fn prune_of_an_area_no_file_lists_a_key_in_needs_yes() {
+    let env = TestEnv::new();
+    let screensaver = "org.gnome.desktop.screensaver";
+    env.gsctl(&["set", "org.gsctl.test", "name-s", "Mine"]).ok();
+    env.gsctl(&["set", screensaver, "logout-delay", "30"]).ok(); // area power
+    // Claims "power" too, but lists only an "other" key.
+    let doc = json!({"gsctl": 1, "area": ["other", "power"], "settings": {"org.gsctl.test": {"count-i": 42}}});
+    let file = write_json(&env, "greedy.json", &doc);
+
+    let dry = env.gsctl(&["apply", &file, "--prune", "--dry-run"]).ok();
+    let needs: Vec<&Value> = dry["requires_yes"].as_array().unwrap().iter().filter(|r| r["area"] == "power").collect();
+    assert_eq!(needs.len(), 1, "{dry}");
+    assert_eq!(needs[0]["keys"], 1);
+    assert!(!dry["requires_yes"].as_array().unwrap().iter().any(|r| r["area"] == "other"), "{dry}");
+
+    let r = env.gsctl(&["apply", &file, "--prune"]);
+    assert_eq!(r.status, 6, "{}", r.stderr);
+    assert_eq!(env.gsctl(&["get", screensaver, "logout-delay"]).ok()["value"], 30);
+    assert_eq!(env.gsctl(&["get", "org.gsctl.test", "name-s"]).ok()["value"], "Mine");
+
+    env.gsctl(&["apply", &file, "--prune", "--yes"]).ok();
+    assert_eq!(env.gsctl(&["get", screensaver, "logout-delay"]).ok()["is_default"], true);
+
+    // A file whose keys back its area prunes without --yes.
+    env.gsctl(&["set", "org.gsctl.test", "name-s", "Again"]).ok();
+    let doc = json!({"gsctl": 1, "area": "other", "settings": {"org.gsctl.test": {"count-i": 42}}});
+    env.gsctl(&["apply", &write_json(&env, "other.json", &doc), "--prune"]).ok();
+    assert_eq!(env.gsctl(&["get", "org.gsctl.test", "name-s"]).ok()["is_default"], true);
+}
+
 // --- extension schemas and scanning ------------------------------------------
 
 /// Install a user extension in directory `dir_name` whose metadata says

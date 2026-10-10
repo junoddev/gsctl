@@ -461,7 +461,7 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
         });
     }
 
-    let guarded: Vec<Value> = planned
+    let mut guarded: Vec<Value> = planned
         .iter()
         .chain(&pruned)
         .filter_map(|p| {
@@ -470,6 +470,7 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
             })
         })
         .collect();
+    guarded.extend(unbacked_prunes(&file_areas, &listed, &pruned));
     let change_json = |p: &Planned| json!({ "schema": p.entry.id(), "path": p.path, "key": p.key, "old": to_json(&p.old), "new": to_json(&p.value) });
     let prune_json = |list: Vec<Value>| if opts.prune { Value::from(list) } else { Value::Null };
 
@@ -485,9 +486,14 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
     doctor::require_writable()?;
     if !guarded.is_empty() && !opts.yes {
         let first = &guarded[0];
+        // A guarded key, or an area `--prune` would empty (see unbacked_prunes).
+        let (schema, key) = match first["schema"].as_str() {
+            Some(s) => (s.to_string(), first["key"].as_str().unwrap_or_default().to_string()),
+            None => (format!("area {}", first["area"].as_str().unwrap_or_default()), "(every key)".to_string()),
+        };
         return Err(Error::Guarded {
-            schema: first["schema"].as_str().unwrap_or_default().to_string(),
-            key: first["key"].as_str().unwrap_or_default().to_string(),
+            schema,
+            key,
             reason: format!(
                 "{} (and {} guarded key(s) in total); nothing was written",
                 first["reason"].as_str().unwrap_or_default(),
@@ -511,6 +517,35 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
     Ok(json!({
         "dry_run": false, "batch": batch, "changes": changes, "pruned": prune_json(resets), "unchanged": unchanged,
     }))
+}
+
+/// `--prune` of an area that no file lists a single key in needs `--yes`:
+/// a file that only claims an area (`"area": [...every area...]`, no
+/// settings) would otherwise reset every customisation in it. One
+/// `requires_yes` item per such area that has keys to prune. An exported
+/// file always lists keys in its areas, so this doesn't fire for exports.
+fn unbacked_prunes(
+    file_areas: &[String],
+    listed: &[(String, Option<String>, String)],
+    pruned: &[Planned],
+) -> Vec<Value> {
+    let mut out = Vec::new();
+    for area in area_names() {
+        let claimed = file_areas.iter().any(|a| a == area);
+        let backed = listed.iter().any(|(schema, _, key)| area_of(schema, key) == area);
+        let keys = pruned.iter().filter(|p| area_of(&p.entry.id(), &p.key) == area).count();
+        if claimed && !backed && keys > 0 {
+            out.push(json!({
+                "area": area,
+                "keys": keys,
+                "reason": format!(
+                    "no file lists a key in area {area}, so --prune would reset all {keys} customised key(s) in it"
+                ),
+                "executes": false,
+            }));
+        }
+    }
+    out
 }
 
 /// `--prune`: customised keys (fixed schemas and listed instances) in the
