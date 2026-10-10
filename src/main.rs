@@ -229,18 +229,22 @@ enum KeysCommand {
     },
     /// Accelerators bound to more than one action.
     Conflicts,
-    /// Add a custom keybinding that runs COMMAND. Refuses an accelerator
-    /// that's already bound unless --force.
+    /// Add a custom keybinding that runs COMMAND. ACCEL is GTK syntax
+    /// ('<Super>t', '<Control><Alt>Delete'). Refuses an accelerator that's
+    /// already bound, or a NAME already used, unless --force.
     Add {
         name: String,
         accel: String,
         command: String,
-        /// Add even if ACCEL is already bound.
+        /// Add even if ACCEL is already bound or NAME is taken.
         #[arg(long)]
         force: bool,
         /// Show the writes without making them.
         #[arg(long)]
         dry_run: bool,
+        /// Confirm writes to guarded keys.
+        #[arg(long)]
+        yes: bool,
     },
     /// Remove a custom keybinding, by name, path or `customN`. `gsctl revert
     /// last` brings it back.
@@ -249,6 +253,9 @@ enum KeysCommand {
         /// Show the writes without making them.
         #[arg(long)]
         dry_run: bool,
+        /// Confirm writes to guarded keys.
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -294,11 +301,11 @@ fn run(cli: &Cli) -> Result<Option<Value>> {
             KeysCommand::Find { accel } => keys::find(&index, accel),
             KeysCommand::List { custom } => keys::list(&index, *custom),
             KeysCommand::Conflicts => keys::conflicts(&index),
-            KeysCommand::Add { name, accel, command, force, dry_run } => {
-                let opts = AddOpts { name, accel, command, force: *force, dry_run: *dry_run };
+            KeysCommand::Add { name, accel, command, force, dry_run, yes } => {
+                let opts = AddOpts { name, accel, command, force: *force, dry_run: *dry_run, yes: *yes };
                 keys::add(&index, &opts)
             }
-            KeysCommand::Remove { binding, dry_run } => keys::remove(&index, binding, *dry_run),
+            KeysCommand::Remove { binding, dry_run, yes } => keys::remove(&index, binding, *dry_run, *yes),
         },
         Command::History { limit, schema, key } => commands::history(*limit, schema, key.as_deref()),
         Command::Revert { id, force, dry_run, yes } => commands::revert(&index, id, *force, *dry_run, *yes),

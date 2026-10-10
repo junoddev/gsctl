@@ -146,6 +146,33 @@
       <default>'left'</default>
       <summary>Dock side</summary>
     </key>
+    <!-- Like dash-to-dock: a real binding, a string that only shows one, and
+         a list of words that isn't a binding. -->
+    <key name="app-hotkey-1" type="as">
+      <default>['&lt;Super&gt;1']</default>
+      <summary>Launch the first app</summary>
+    </key>
+    <key name="shortcut-text" type="s">
+      <default>'&lt;Super&gt;q'</default>
+      <summary>Text of the dock shortcut</summary>
+    </key>
+    <key name="labels" type="as">
+      <default>['a', 'b']</default>
+      <summary>Labels</summary>
+    </key>
+  </schema>
+
+  <!-- An extension keybinding schema with no installed owner: every key counts,
+       strings too (like PaperWM's org.gnome.shell.extensions.paperwm.keybindings). -->
+  <schema id="org.gnome.shell.extensions.gsctl-orphan.keybindings" path="/org/gnome/shell/extensions/gsctl-orphan/keybindings/">
+    <key name="toggle" type="s">
+      <default>'&lt;Super&gt;F12'</default>
+      <summary>Toggle</summary>
+    </key>
+    <key name="spare" type="as">
+      <default>[]</default>
+      <summary>Spare</summary>
+    </key>
   </schema>
 
   <!-- Stand-in for org.gnome.shell, for `gsctl ext`. -->

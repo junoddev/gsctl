@@ -138,6 +138,9 @@ pub fn render(command: &str, out: &Value) -> String {
             }
         }
         "keys-conflicts" => {
+            if out["count"] == 0 {
+                line("no conflicts".into());
+            }
             for c in out["conflicts"].as_array().into_iter().flatten() {
                 line(format!("{}:", s(&c["accel"])));
                 for b in c["bindings"].as_array().into_iter().flatten() {
@@ -222,10 +225,16 @@ fn write_text(w: &Value) -> String {
 
 fn binding_text(b: &Value) -> String {
     let accels: Vec<&str> = b["accels"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-    let what = match b.get("custom") {
+    let mut what = match b.get("custom") {
         Some(c) => format!("custom {:?}: {}", s(&c["name"]), s(&c["command"])),
-        None => format!("{} {}  # {}", s(&b["schema"]), s(&b["key"]), s(&b["summary"])),
+        None => s(&b["label"]).to_string(),
     };
+    if b["active"] == false {
+        what.push_str("  (extension off)");
+    }
+    if b.get("custom").is_none() && !s(&b["summary"]).is_empty() {
+        what.push_str(&format!("  # {}", s(&b["summary"])));
+    }
     format!("{:<28} {what}", accels.join(" "))
 }
 

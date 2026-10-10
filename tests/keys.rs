@@ -138,7 +138,8 @@ fn remove_refuses_unknown_and_ambiguous_names() {
     assert_eq!(r.error()["error"]["code"], "binding_not_found");
 
     env.gsctl(&["keys", "add", "Same", "<Super>F1", "true"]).ok();
-    env.gsctl(&["keys", "add", "Same", "<Super>F2", "true"]).ok();
+    // A second binding with the same name takes --force.
+    env.gsctl(&["keys", "add", "Same", "<Super>F2", "true", "--force"]).ok();
     let r = env.gsctl(&["keys", "remove", "Same"]);
     assert_eq!(r.status, 2, "{}", r.stderr);
     assert!(r.error()["error"]["message"].as_str().unwrap().contains(CUSTOM1));
@@ -154,4 +155,188 @@ fn revert_last_undoes_keys_add() {
     assert_eq!(env.gsctl(&["get", MEDIA_KEYS, "custom-keybindings"]).ok()["is_default"], true);
     let name = env.gsctl(&["get", CUSTOM, "name", "--path", CUSTOM0]).ok();
     assert_eq!(name["is_default"], true);
+}
+
+const DEMO: &str = "org.gnome.shell.extensions.gsctl-demo";
+const SYSTEM_EXT: &str = "org.gnome.shell.extensions.gsctl-system";
+const ORPHAN: &str = "org.gnome.shell.extensions.gsctl-orphan.keybindings";
+
+fn binding<'a>(v: &'a Value, schema: &str, key: &str) -> Option<&'a Value> {
+    v["bindings"].as_array().unwrap().iter().find(|b| b["schema"] == schema && b["key"] == key)
+}
+
+#[test]
+fn list_includes_extension_bindings_with_their_source() {
+    let env = TestEnv::new();
+    let out = env.gsctl(&["keys", "list"]).ok();
+
+    let wm = binding(&out, WM, "close").unwrap();
+    assert_eq!(wm["source"], "gnome");
+    assert_eq!(wm["active"], true);
+
+    // Bundled with a user extension, found by its value; the extension is off.
+    let demo = binding(&out, DEMO, "take-window").expect("extension binding listed");
+    assert_eq!(demo["source"], "extension");
+    assert_eq!(demo["extension"], "demo@gsctl.test");
+    assert_eq!(demo["accels"], json!(["<Super>t"]));
+    assert_eq!(demo["active"], false);
+
+    // Installed system-wide, owned through the extension's JS, enabled by the session mode.
+    let sys = binding(&out, SYSTEM_EXT, "app-hotkey-1").expect("system extension binding listed");
+    assert_eq!(sys["extension"], "system@gsctl.test");
+    assert_eq!(sys["active"], true);
+
+    // A keybinding schema: string keys count too.
+    let orphan = binding(&out, ORPHAN, "toggle").expect("string key in a keybinding schema");
+    assert_eq!(orphan["accels"], json!(["<Super>F12"]));
+    assert_eq!(orphan["source"], "extension");
+
+    // Not bindings: a string that only displays one, words, an empty list.
+    assert!(binding(&out, SYSTEM_EXT, "shortcut-text").is_none());
+    assert!(binding(&out, SYSTEM_EXT, "labels").is_none());
+    assert!(binding(&out, SYSTEM_EXT, "dock-side").is_none());
+    assert!(binding(&out, ORPHAN, "spare").is_none());
+    assert!(binding(&out, "org.gsctl.test", "list-as").is_none());
+
+    // A value set later is picked up.
+    env.gsctl(&["set", ORPHAN, "spare", r#"["<Super>k"]"#]).ok();
+    let out = env.gsctl(&["keys", "find", "<Super>k"]).ok();
+    assert_eq!(keys_of(&out), [format!("{ORPHAN} spare")]);
+}
+
+#[test]
+fn find_and_conflicts_see_active_extension_bindings() {
+    let env = TestEnv::new();
+    // The demo extension is off: its binding is reported but doesn't take the accelerator.
+    let out = env.gsctl(&["keys", "find", "<Super>t"]).ok();
+    assert_eq!(out["free"], true);
+    assert_eq!(keys_of(&out), [format!("{DEMO} take-window")]);
+
+    env.gsctl(&["set", "org.gnome.shell", "enabled-extensions", r#"["demo@gsctl.test"]"#, "--yes"]).ok();
+    let out = env.gsctl(&["keys", "find", "<super>T"]).ok();
+    assert_eq!(out["free"], false);
+    assert_eq!(out["bindings"][0]["extension"], "demo@gsctl.test");
+
+    let r = env.gsctl(&["keys", "add", "Terminal", "<Super>t", "ptyxis"]);
+    assert_eq!(r.status, 7, "{}", r.stderr);
+    assert!(r.error()["error"]["message"].as_str().unwrap().contains("demo@gsctl.test take-window"));
+
+    env.gsctl(&["set", WM, "minimize", r#"["<Super>1"]"#]).ok();
+    let out = env.gsctl(&["keys", "conflicts"]).ok();
+    assert_eq!(out["count"], 1, "{out}");
+    assert_eq!(out["conflicts"][0]["accel"], "<Super>1");
+    assert_eq!(keys_of(&out["conflicts"][0]), [format!("{WM} minimize"), format!("{SYSTEM_EXT} app-hotkey-1")]);
+}
+
+#[test]
+fn odd_but_valid_bindings_stay_listed() {
+    let env = TestEnv::new();
+    let odd = r#"["<Release><Super>z", "<Mod5>space", "<Lock>F1", "<Super><shift>f", "<Super>KP_2", "<Super>Above_Tab", "XF86AudioMute"]"#;
+    env.gsctl(&["set", WM, "show-desktop", odd]).ok();
+    let out = env.gsctl(&["keys", "list"]).ok();
+    let b = binding(&out, WM, "show-desktop").unwrap();
+    assert_eq!(b["accels"].as_array().unwrap().len(), 7, "{b}");
+    for accel in ["<Release><Super>z", "<Mod5>space", "<Lock>F1", "<Shift><Super>f", "<Super>kp_2", "XF86AudioMute"] {
+        let found = env.gsctl(&["keys", "find", accel]).ok();
+        assert_eq!(keys_of(&found), [format!("{WM} show-desktop")], "{accel}");
+    }
+    // Even a form gsctl wouldn't accept as input is listed as it is.
+    env.gsctl(&["set", WM, "show-desktop", r#"["<Super>banana"]"#]).ok();
+    let out = env.gsctl(&["keys", "list"]).ok();
+    assert_eq!(binding(&out, WM, "show-desktop").unwrap()["accels"], json!(["<Super>banana"]));
+}
+
+#[test]
+fn invalid_accelerators_are_refused_with_a_suggestion() {
+    let env = TestEnv::new();
+    for (input, suggestion) in [
+        ("Super+T", "<Super>t"),
+        ("Ctrl+Alt+Del", "<Control><Alt>Delete"),
+        ("super+return", "<Super>Return"),
+        ("<Super>Del", "<Super>Delete"),
+        ("Ctrl + Shift + Esc", "<Control><Shift>Escape"),
+        ("<Control>+", "<Control>plus"),
+    ] {
+        let r = env.gsctl(&["keys", "find", input]);
+        assert_eq!(r.status, 4, "{input}: {}", r.stderr);
+        let err = &r.error()["error"];
+        assert_eq!(err["code"], "invalid_value");
+        assert_eq!(err["suggestion"], suggestion, "{input}");
+        assert!(err["hint"].as_str().unwrap().contains("<Super>"));
+
+        let r = env.gsctl(&["keys", "add", "X", input, "true", "--dry-run"]);
+        assert_eq!(r.status, 4, "{input}: {}", r.stderr);
+        assert_eq!(r.error()["error"]["suggestion"], suggestion);
+    }
+    let r = env.gsctl(&["keys", "find", "banana"]);
+    assert_eq!(r.status, 4);
+    assert_eq!(r.error()["error"]["suggestion"], Value::Null);
+    assert_eq!(env.gsctl(&["keys", "find", "<Super>banana"]).status, 4);
+    assert_eq!(env.gsctl(&["keys", "list", "--custom"]).ok()["count"], 0);
+
+    // Valid forms with any modifier spelling or key case.
+    for ok in
+        ["<Super>Return", "<super>return", "<Primary><Shift>Page_Up", "<Release>F2", "XF86Calculator", "<Ctrl>KP_Add"]
+    {
+        assert_eq!(env.gsctl(&["keys", "find", ok]).status, 0, "{ok}");
+    }
+}
+
+#[test]
+fn add_refuses_a_duplicate_name() {
+    let env = TestEnv::new();
+    env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis"]).ok();
+    let r = env.gsctl(&["keys", "add", "Terminal", "<Super>F5", "kitty", "--dry-run"]);
+    assert_eq!(r.status, 7, "{}", r.stderr);
+    let err = &r.error()["error"];
+    assert_eq!(err["code"], "conflict");
+    assert_eq!(err["existing"][0]["path"], CUSTOM0);
+    assert_eq!(err["existing"][0]["accel"], "<Super>Return");
+    assert_eq!(err["existing"][0]["command"], "ptyxis");
+    let msg = err["message"].as_str().unwrap();
+    assert!(msg.contains(CUSTOM0) && msg.contains("ptyxis"), "{msg}");
+
+    env.gsctl(&["keys", "add", "Terminal", "<Super>F5", "kitty", "--force"]).ok();
+    assert_eq!(env.gsctl(&["keys", "list", "--custom"]).ok()["count"], 2);
+}
+
+#[test]
+fn add_stores_the_trimmed_accelerator_as_typed() {
+    let env = TestEnv::new();
+    let out = env.gsctl(&["keys", "add", "Files", "  <Primary><super>e ", "nautilus"]).ok();
+    assert_eq!(out["accel"], "<Primary><super>e");
+    assert_eq!(out["normalized"], "<Control><Super>e");
+    assert_eq!(env.gsctl(&["get", CUSTOM, "binding", "--path", CUSTOM0]).ok()["value"], "<Primary><super>e");
+}
+
+#[test]
+fn add_and_remove_pass_yes_through_and_report_requires_yes() {
+    let env = TestEnv::new();
+    let dry = env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis", "--dry-run"]).ok();
+    assert!(dry["requires_yes"].is_boolean(), "{dry}");
+    env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis", "--yes"]).ok();
+    let dry = env.gsctl(&["keys", "remove", "Terminal", "--dry-run"]).ok();
+    assert!(dry["requires_yes"].is_boolean(), "{dry}");
+    env.gsctl(&["keys", "remove", "Terminal", "--yes"]).ok();
+    assert_eq!(env.gsctl(&["keys", "list", "--custom"]).ok()["count"], 0);
+}
+
+#[test]
+fn text_output_names_bindings_for_people() {
+    let env = TestEnv::new();
+    let r = env.gsctl(&["--format", "text", "keys", "conflicts"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(r.stdout.trim(), "no conflicts");
+
+    env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis"]).ok();
+    let r = env.gsctl(&["keys", "add", "Other", "<Super>Return", "kitty"]);
+    assert_eq!(r.status, 7);
+    let msg = r.error()["error"]["message"].as_str().unwrap().to_string();
+    assert!(msg.contains(r#"custom "Terminal""#), "{msg}");
+    assert!(!msg.contains(CUSTOM), "{msg}");
+
+    let r = env.gsctl(&["--format", "text", "keys", "list"]);
+    assert!(r.stdout.contains(r#"custom "Terminal": ptyxis"#), "{}", r.stdout);
+    assert!(r.stdout.contains("demo@gsctl.test take-window"), "{}", r.stdout);
+    assert!(r.stdout.contains("(extension off)"), "{}", r.stdout);
 }

@@ -6,5 +6,10 @@
       <summary>Show the demo indicator</summary>
       <description>Whether the pelican indicator appears in the top bar.</description>
     </key>
+    <!-- A keybinding in a schema not named for keybindings: found by its value. -->
+    <key name="take-window" type="as">
+      <default>['&lt;Super&gt;t']</default>
+      <summary>Take the window</summary>
+    </key>
   </schema>
 </schemalist>
