@@ -54,13 +54,22 @@ detail). `schema.key` and `/dconf/path/key` work as one argument too.
 
 ## Guarded keys
 
-Keys that can lock the user out or break input (remote desktop,
-`input-sources`, `screensaver lock-enabled`, `lockdown disable-lock-screen`,
-accessibility, `enabled-extensions`) are refused without `--yes` (exit 6);
-a dry-run shows `"requires_yes": true`. Get the user's explicit OK first,
-especially over a remote session. `keys add` and `ext enable` make GNOME run
-code (a command, an extension): ask the user before using them too, and
-pass `--yes` when gsctl asks for it.
+Keys that can lock the user out, cut off remote access or break input
+(remote desktop, `input-sources`, lock and idle settings, all of `lockdown`,
+proxy, power `sleep-inactive-*`, accessibility, the extension lists) are
+refused without `--yes` (exit 6); a dry-run shows `"requires_yes": true`, and
+`gsctl schema <schema> <key>` and search hits show `"guarded"` (the reason).
+Get the user's explicit OK first, especially over a remote session.
+
+Some writes make GNOME run code, marked `"executes": true`: `keys add` (the
+shortcut runs a shell command), `ext enable` (the extension runs inside GNOME
+Shell), and keys like a custom shortcut's `command`, Ptyxis `custom-command`
+or the terminal's `exec`. Dry-run, show the user the exact command or
+extension, and add `--yes` only after they agree. `keys remove` and
+`ext disable` don't need it.
+
+Use `--path` only for relocatable instances at their usual place (custom
+shortcuts, Ptyxis profiles); gsctl refuses a fixed schema's path.
 
 ## Undo
 
@@ -72,7 +81,10 @@ Revert by the `journal_id` (or `batch`) that your write returned. The
 journal is shared with the user and other agents, so `revert last` may undo
 someone else's change. A revert refuses (exit 7) if the key has changed
 since; check `gsctl get` and only `--force` if overwriting is intended.
-`gsctl reset <schema> <key>` goes back to the default.
+`gsctl reset <schema> <key>` goes back to the default. If a batch write
+fails partway, gsctl rolls back what it wrote (`rolled_back` in the error).
+Secrets (proxy passwords) aren't journaled or exported, so their changes
+can't be reverted: set the key again.
 
 ## Writing values
 
@@ -93,19 +105,25 @@ GVariant text works too (`"@as []"`). On `invalid_value` (exit 4), read
 
 ## Keyboard shortcuts
 
-Accelerators use GTK syntax: `<Super>t`, `<Ctrl><Alt>Delete`, `<Shift><Super>s`.
-Before binding, check what is taken and ask the user which command they
-want (e.g. which terminal):
+Accelerators use GTK syntax: modifiers in angle brackets, then one key
+name: `<Super>t`, `<Control><Alt>Delete`, `<Shift><Super>Page_Up`,
+`XF86AudioMute`. Never `Super+T`: gsctl refuses it (exit 4) and puts the
+right form in `error.suggestion`. Before binding, check what is taken and
+ask the user which command they want (e.g. which terminal):
 
     gsctl keys find '<Super>t'           # "free": true if nothing uses it
     gsctl keys list [--custom]
     gsctl keys conflicts
     gsctl keys add Terminal '<Super>t' ptyxis --dry-run
-    gsctl keys add Terminal '<Super>t' ptyxis
+    gsctl keys add Terminal '<Super>t' ptyxis --yes   # after the user agrees
     gsctl keys remove Terminal           # by name, path or customN
 
-`keys add` refuses a taken accelerator (exit 7); free it first or `--force`
-only if the user wants both. To change a built-in shortcut, set its key in
+`keys find` and `conflicts` include extension shortcuts (PaperWM, the dock),
+with `source`, `extension` and `active`; don't take an accelerator an enabled
+extension uses unless the user agrees. With such extensions, many listed
+conflicts are deliberate. `keys add` refuses a taken accelerator, or a name
+another custom shortcut already has (exit 7, with `error.existing`); free or
+rename it first, and `--force` only if the user wants both. To change a built-in shortcut, set its key in
 `org.gnome.desktop.wm.keybindings` (or shell/mutter/media-keys) to a string
 array: `'["<Super>x"]'`; `[]` disables it.
 
@@ -113,7 +131,8 @@ array: `'["<Super>x"]'`; `[]` disables it.
 
     gsctl ext list
     gsctl ext info <uuid>                # metadata plus its settings
-    gsctl ext enable|disable <uuid> [--dry-run]
+    gsctl ext enable <uuid> --dry-run    # then --yes, after the user agrees
+    gsctl ext disable <uuid>
 
 Change an extension's options through its schema (from `ext info`). Never
 `set` `enabled-extensions` wholesale. On Ubuntu the session mode enables the
