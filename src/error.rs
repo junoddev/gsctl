@@ -26,6 +26,10 @@ pub enum Error {
     EntryNotFound(String),
     #[error("{message}")]
     Conflict { id: String, message: String },
+    /// A conflict with structured details merged into the error object
+    /// (`keys add`: the bindings already on an accelerator or name).
+    #[error("{message}")]
+    ConflictWith { id: String, message: String, details: Value },
     /// Several problems at once (from `apply`); `exit` is the first problem's.
     #[error("{message}")]
     Batch { message: String, exit: i32, problems: Value },
@@ -48,7 +52,7 @@ impl Error {
             Error::InvalidValue { .. } => 4,
             Error::NotWritable { .. } | Error::NoSession(_) => 5,
             Error::Guarded { .. } => 6,
-            Error::Conflict { .. } => 7,
+            Error::Conflict { .. } | Error::ConflictWith { .. } => 7,
             Error::Batch { exit, .. } => *exit,
         }
     }
@@ -66,7 +70,7 @@ impl Error {
             Error::EntryNotFound(_) => "entry_not_found",
             Error::ExtensionNotFound(_) => "extension_not_found",
             Error::BindingNotFound(_) => "binding_not_found",
-            Error::Conflict { .. } => "conflict",
+            Error::Conflict { .. } | Error::ConflictWith { .. } => "conflict",
             Error::Batch { .. } => "batch_invalid",
         }
     }
@@ -91,6 +95,13 @@ impl Error {
             Error::ExtensionNotFound(uuid) => json!({ "uuid": uuid, "hint": "see `gsctl ext list`" }),
             Error::BindingNotFound(what) => json!({ "binding": what, "hint": "see `gsctl keys list --custom`" }),
             Error::Conflict { id, .. } => json!({ "id": id }),
+            Error::ConflictWith { id, details, .. } => {
+                let mut v = json!({ "id": id });
+                if let (Value::Object(v), Value::Object(d)) = (&mut v, details) {
+                    v.extend(d.clone());
+                }
+                v
+            }
             Error::Batch { problems, .. } => json!({ "problems": problems }),
             Error::NoSession(reason) => json!({ "reason": reason, "hint": "run `gsctl doctor`" }),
             Error::Usage(_) | Error::Internal(_) => Value::Null,
