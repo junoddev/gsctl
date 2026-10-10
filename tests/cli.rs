@@ -668,6 +668,8 @@ fn doctor_in_a_working_session() {
     assert_eq!(check(&out, "gnome_shell")["status"], "warn");
     assert_eq!(check(&out, "dconf_database")["status"], "warn", "nothing written yet");
     assert_eq!(check(&out, "session_mode")["detail"]["name"], "testmode");
+    // The test schemas don't include gsettings-desktop-schemas.
+    assert_eq!(check(&out, "desktop_schemas")["status"], "warn");
 
     env.gsctl(&["set", S, "count-i", "1"]).ok();
     assert_eq!(check(&env.gsctl(&["doctor"]).ok(), "dconf_database")["status"], "ok");

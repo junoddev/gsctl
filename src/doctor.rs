@@ -12,6 +12,9 @@ use crate::error::{Error, Result};
 use crate::index::{Index, Origin};
 use crate::{ext, journal};
 
+/// From gsettings-desktop-schemas, which every GNOME desktop has.
+const DESKTOP_SCHEMA: &str = "org.gnome.desktop.interface";
+
 fn check(name: &str, status: &str, detail: impl Into<Value>, hint: Option<&str>) -> Value {
     json!({ "name": name, "status": status, "detail": detail.into(), "hint": hint })
 }
@@ -152,6 +155,16 @@ pub fn doctor(index: &Index) -> Result<Value> {
     let total = index.entries().len();
     let from_ext = index.entries().iter().filter(|e| matches!(e.origin, Origin::Extension { .. })).count();
     checks.push(check("schemas", "ok", json!({ "total": total, "from_extension_dirs": from_ext }), None));
+    checks.push(if index.get(DESKTOP_SCHEMA).is_ok() {
+        check("desktop_schemas", "ok", DESKTOP_SCHEMA, None)
+    } else {
+        check(
+            "desktop_schemas",
+            "warn",
+            format!("{DESKTOP_SCHEMA} is not installed"),
+            Some("GNOME's desktop settings aren't available: install gsettings-desktop-schemas, or check XDG_DATA_DIRS (is this a GNOME system?)"),
+        )
+    });
     checks.push(check("journal", "ok", journal::path().display().to_string(), None));
 
     let ok = !checks.iter().any(|c| c["status"] == "error");
