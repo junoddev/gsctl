@@ -240,6 +240,3 @@ settings:
 An opt-in, read-only smoke test runs against the installed schemas:
 
     cargo test --test smoke_real -- --ignored
-
-[NOTES.md](NOTES.md) has the design, the decisions made along the way, and the
-results of testing on a real desktop.

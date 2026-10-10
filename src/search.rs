@@ -161,7 +161,7 @@ pub fn rank(query: &Query, docs: &[Doc]) -> Vec<(usize, Match)> {
 }
 
 /// Schemas installed on Ubuntu desktops that nothing in the GNOME session
-/// reads. Found on a test machine (Ubuntu 26.04, GNOME 50) by checking which
+/// reads. Found on Ubuntu 26.04 with GNOME 50 by checking which
 /// binaries and libraries mention them: none, apart from libunity for the
 /// Unity lenses. A prefix ending in `.` also matches the schema itself.
 const INACTIVE: &[(&str, &str)] = &[
