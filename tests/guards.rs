@@ -201,6 +201,39 @@ fn export_out_writes_private_files_and_refuses_symlinks() {
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
 }
 
+// --- secrets -------------------------------------------------------------------
+
+const PROXY: &str = "org.gnome.system.proxy.http";
+
+#[test]
+fn secrets_stay_out_of_the_journal_and_exports() {
+    let env = TestEnv::new();
+    env.gsctl(&["set", PROXY, "host", "proxy.example", "--yes"]).ok();
+    let out = env.gsctl(&["set", PROXY, "authentication-password", "hunter2", "--yes"]).ok();
+    assert!(out["journal_id"].is_string());
+
+    let journal = std::fs::read_to_string(env.journal()).unwrap();
+    assert!(!journal.contains("hunter2"), "{journal}");
+    let last: Value = serde_json::from_str(journal.lines().last().unwrap()).unwrap();
+    assert_eq!(last["redacted"], true);
+    assert_eq!(last["new"], "<redacted>");
+    assert!(journal.contains("proxy.example"), "only secrets are redacted");
+
+    let r = env.gsctl(&["revert", "last", "--yes"]);
+    assert_eq!(r.status, 2, "{}", r.stderr);
+    assert!(r.error()["error"]["message"].as_str().unwrap().contains("secret"), "{}", r.stderr);
+    assert_eq!(env.gsctl(&["get", PROXY, "authentication-password"]).ok()["value"], "hunter2");
+
+    for args in [vec!["export"], vec!["export", "--include-state"]] {
+        let doc = env.gsctl(&args).ok();
+        let text = doc.to_string();
+        assert!(!text.contains("hunter2"), "{text}");
+        assert_eq!(doc["settings"][PROXY]["host"], "proxy.example");
+        let skipped = doc["skipped_state"].as_array().unwrap();
+        assert!(skipped.iter().any(|s| s["key"] == "authentication-password" && s["reason"] == "secret"), "{doc}");
+    }
+}
+
 // --- apply --prune -------------------------------------------------------------
 
 #[test]

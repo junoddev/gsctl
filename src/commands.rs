@@ -402,6 +402,12 @@ fn prepare_revert<'a>(index: &'a Index, e: &Value, force: bool) -> Result<Prepar
     let field =
         |name: &str| e[name].as_str().ok_or_else(|| Error::Internal(format!("journal entry {id} has no {name}")));
     let (schema, key) = (field("schema")?, field("key")?);
+    if e["redacted"] == true {
+        return Err(Error::Usage(format!(
+            "journal entry {id} changed a secret ({schema} {key}); its values aren't stored, so it can't be \
+             reverted. Set the key again instead"
+        )));
+    }
     let path = e["path"].as_str();
     let entry = index.get(schema)?;
     let k = entry.key(key)?;

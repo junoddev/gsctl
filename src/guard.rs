@@ -148,6 +148,14 @@ pub fn check_entry(entry: &crate::index::Entry, path: Option<&str>, key: &str) -
     check_at(&entry.id(), path.or(fixed.as_deref()), key)
 }
 
+/// Whether a key of type `ty` (a GVariant type string) holds a secret, like
+/// `org.gnome.system.proxy.http authentication-password`: a string-like key
+/// whose name mentions a password (`disable-show-password`, a boolean, isn't
+/// one). Secrets aren't exported and their values aren't journaled.
+pub fn is_secret(key: &str, ty: &str) -> bool {
+    key.contains("password") && matches!(ty, "s" | "ms" | "ay" | "as")
+}
+
 /// The schema id GNOME's convention gives the schema at a dconf path:
 /// `/org/gnome/desktop/a11y/keyboard/` → `org.gnome.desktop.a11y.keyboard`.
 fn schema_id_for_path(path: &str) -> String {
@@ -217,6 +225,14 @@ mod tests {
         assert!(check("org.gnome.shell", "favorite-apps").is_none());
         assert!(check("org.gnome.desktop.input-sources-extra", "x").is_none());
         assert!(check("org.gnome.desktop.a11yish", "x").is_none());
+    }
+
+    #[test]
+    fn secrets() {
+        assert!(super::is_secret("authentication-password", "s"));
+        assert!(!super::is_secret("disable-show-password", "b"));
+        assert!(!super::is_secret("remember-mount-password", "b"));
+        assert!(!super::is_secret("authentication-user", "s"));
     }
 
     #[test]

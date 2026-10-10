@@ -255,6 +255,11 @@ pub fn export(index: &Index, opts: &ExportOpts) -> Result<Value> {
             if !wanted(area) {
                 continue;
             }
+            // Never exported, even with --include-state.
+            if guard::is_secret(&key, value.type_().as_str()) {
+                skipped.push(json!({ "schema": id, "key": key, "reason": "secret" }));
+                continue;
+            }
             if !opts.include_state
                 && let Some(reason) = state_reason(&id, &key)
             {

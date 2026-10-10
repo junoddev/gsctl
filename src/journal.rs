@@ -66,6 +66,16 @@ pub fn record(change: &Change) -> std::io::Result<String> {
         "old_user_value": change.old_user_value.map(|v| v.print(true).to_string()),
         "new_gvariant": change.new.print(true).as_str(),
     });
+    if crate::guard::is_secret(change.key, change.new.type_().as_str()) {
+        const REDACTED: &str = "<redacted>";
+        for field in ["old", "new", "old_gvariant", "new_gvariant"] {
+            entry[field] = REDACTED.into();
+        }
+        if change.old_user_value.is_some() {
+            entry["old_user_value"] = REDACTED.into();
+        }
+        entry["redacted"] = true.into();
+    }
     if let Some(r) = change.reverts {
         entry["reverts"] = r.into();
     }
