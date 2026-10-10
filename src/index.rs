@@ -144,8 +144,16 @@ const LISTED: &[Listed] = &[
     },
 ];
 
-/// The only schema ids an extension's own `schemas/` dir may add.
+/// The schema ids, and the dconf paths, an extension's own `schemas/` dir may
+/// add. GSConnect's id is `org.gnome.Shell.Extensions.GSConnect`, and some
+/// extensions use their own reverse-DNS id at a path under this one.
 const EXTENSION_NAMESPACE: &str = "org.gnome.shell.extensions.";
+const EXTENSION_PATH: &str = "/org/gnome/shell/extensions/";
+
+/// Whether an extension may add schema `id` with fixed `path`.
+fn in_extension_namespace(id: &str, path: Option<&str>) -> bool {
+    id.to_ascii_lowercase().starts_with(EXTENSION_NAMESPACE) || path.is_some_and(|p| p.starts_with(EXTENSION_PATH))
+}
 
 fn valid_path(p: &str) -> bool {
     p.starts_with('/') && p.ends_with('/') && !p.contains("//")
@@ -188,11 +196,11 @@ impl Index {
             };
             let (fixed, relocatable) = source.list_schemas(false);
             for id in fixed.iter().chain(relocatable.iter()) {
-                if !id.starts_with(EXTENSION_NAMESPACE) {
-                    continue;
-                }
                 let Some(schema) = source.lookup(id, false) else { continue };
                 let path = schema.path();
+                if !in_extension_namespace(id, path.as_deref()) {
+                    continue;
+                }
                 if path.is_some() && entries.iter().any(|e| e.schema.path() == path) {
                     continue;
                 }

@@ -434,6 +434,12 @@ const SHADOW_XML: &str = r#"<schemalist>
   <schema id="org.gnome.shell.extensions.shadow-own" path="/org/gnome/shell/extensions/shadow-own/">
     <key name="x" type="b"><default>false</default><summary>Own</summary></key>
   </schema>
+  <schema id="org.gnome.Shell.Extensions.ShadowCase" path="/org/gnome/shell/extensions/shadow-case/">
+    <key name="x" type="b"><default>false</default><summary>Like GSConnect</summary></key>
+  </schema>
+  <schema id="com.example.shadow" path="/org/gnome/shell/extensions/shadow-dns/">
+    <key name="x" type="b"><default>false</default><summary>Own id, extension path</summary></key>
+  </schema>
 </schemalist>"#;
 
 #[test]
@@ -445,8 +451,12 @@ fn extension_schemas_cannot_shadow_system_ones() {
     assert_eq!(k["summary"], "Lock screen after blank");
     let sch = env.gsctl(&["schema", "org.gnome.desktop.screensaver"]).ok();
     assert_eq!(sch["path"], "/org/gnome/desktop/screensaver/");
-    // Only ids under org.gnome.shell.extensions. come from extensions.
+    // Only ids under org.gnome.shell.extensions. (any case), or at a path
+    // under /org/gnome/shell/extensions/, come from extensions.
     assert_eq!(env.gsctl(&["schema", "org.gsctl.outside"]).status, 3);
+    for id in ["org.gnome.Shell.Extensions.ShadowCase", "com.example.shadow"] {
+        assert_eq!(env.gsctl(&["schema", id, "x"]).ok()["origin"]["type"], "extension", "{id}");
+    }
     let own = env.gsctl(&["schema", "org.gnome.shell.extensions.shadow-own", "x"]).ok();
     assert_eq!(own["origin"]["type"], "extension");
     assert_eq!(own["origin"]["uuid"], "shadow@gsctl.test");
