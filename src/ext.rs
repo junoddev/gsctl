@@ -15,6 +15,7 @@ const SHELL: &str = "org.gnome.shell";
 const ENABLED: &str = "enabled-extensions";
 const DISABLED: &str = "disabled-extensions";
 const DISABLE_USER: &str = "disable-user-extensions";
+const ENABLE_REASON: &str = "enabling an extension runs its code inside GNOME Shell";
 
 pub struct Extension {
     pub uuid: String,
@@ -268,8 +269,9 @@ pub fn info(index: &Index, uuid: &str) -> Result<Value> {
 /// Enable or disable one extension by editing only its uuid in
 /// `enabled-extensions` / `disabled-extensions`, as the Extensions app does.
 /// These keys are guarded against wholesale replacement; a single-uuid edit
-/// doesn't need `--yes`.
-pub fn set_enabled(index: &Index, uuid: &str, enable: bool, dry_run: bool) -> Result<Value> {
+/// skips that guard. Enabling runs the extension's code inside GNOME Shell,
+/// so it needs `yes` (the dry run reports `requires_yes`); disabling doesn't.
+pub fn set_enabled(index: &Index, uuid: &str, enable: bool, dry_run: bool, yes: bool) -> Result<Value> {
     let exts = installed();
     find(&exts, uuid)?;
     let state = shell_state(index)?;
@@ -290,6 +292,12 @@ pub fn set_enabled(index: &Index, uuid: &str, enable: bool, dry_run: bool) -> Re
         }
     }
 
+    let changes = enabled != state.enabled || disabled != state.disabled;
+    let requires_yes = enable && changes;
+    if requires_yes && !dry_run && !yes {
+        return Err(Error::Guarded { schema: SHELL.into(), key: ENABLED.into(), reason: ENABLE_REASON.into() });
+    }
+
     let op = if enable { "ext-enable" } else { "ext-disable" };
     let batch = journal::new_id(Some(op));
     let opts = WriteOpts { path: None, dry_run, yes: true };
@@ -306,6 +314,9 @@ pub fn set_enabled(index: &Index, uuid: &str, enable: bool, dry_run: bool) -> Re
         "session_mode": state.mode_json(),
         "changed": !writes.is_empty(),
         "dry_run": dry_run,
+        "requires_yes": requires_yes,
+        "guarded": if requires_yes { Value::from(ENABLE_REASON) } else { Value::Null },
+        "executes": enable,
         "batch": if dry_run || writes.is_empty() { Value::Null } else { batch.into() },
         "user_extensions_disabled": state.user_disabled,
         "writes": writes,

@@ -296,7 +296,7 @@ fn guarded_keys_need_yes() {
     env.gsctl(&["reset", screensaver, "lock-enabled", "--yes"]).ok();
 
     // Other keys in the same schema are not guarded.
-    env.gsctl(&["set", screensaver, "lock-delay", "30"]).ok();
+    env.gsctl(&["set", screensaver, "logout-delay", "30"]).ok();
 }
 
 #[test]
@@ -337,7 +337,7 @@ fn writes_without_a_session_bus_are_refused() {
     // "succeed" with changed: false, since read-back can't catch it.
     no_bus_error(&env.gsctl_without_bus(&["set", S, "name-s", "Adwaita"]));
     no_bus_error(&env.gsctl_without_bus(&["reset", S, "name-s"]));
-    no_bus_error(&env.gsctl_without_bus(&["keys", "add", "T", "<Super><Alt>F12", "true"]));
+    no_bus_error(&env.gsctl_without_bus(&["keys", "add", "T", "<Super><Alt>F12", "true", "--yes"]));
     no_bus_error(&env.gsctl_without_bus(&["ext", "disable", common::EXTENSION_UUID]));
 
     // An apply with nothing to change is refused too: "unchanged" was
@@ -363,13 +363,13 @@ fn changed_lists_only_customised_keys() {
 
     env.gsctl(&["set", S, "count-i", "11"]).ok();
     env.gsctl(&["set", S, "name-s", "Adwaita"]).ok(); // same as default
-    env.gsctl(&["set", "org.gnome.desktop.screensaver", "lock-delay", "5"]).ok();
+    env.gsctl(&["set", "org.gnome.desktop.screensaver", "logout-delay", "5"]).ok();
 
     let out = env.gsctl(&["changed"]).ok();
     let items = out["changed"].as_array().unwrap();
     assert_eq!(out["count"], 2, "{out}");
     assert!(items.iter().any(|c| c["key"] == "count-i" && c["value"] == 11 && c["default"] == 10));
-    assert!(items.iter().any(|c| c["key"] == "lock-delay"));
+    assert!(items.iter().any(|c| c["key"] == "logout-delay"));
 
     let only = env.gsctl(&["changed", "--schema", "org.gnome.desktop"]).ok();
     assert_eq!(only["count"], 1);
@@ -381,7 +381,7 @@ fn changed_includes_listed_relocatable_instances() {
     let env = TestEnv::new();
     let custom = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding";
     let path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/";
-    env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis"]).ok();
+    env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis", "--yes"]).ok();
     // Unlisted instances can't be found, so they're left out.
     env.gsctl(&["set", "org.gnome.Ptyxis.Profile", "label", "Stale", "--path", "/org/gnome/Ptyxis/Profiles/x/"]).ok();
 
@@ -435,7 +435,7 @@ fn history_lists_newest_first_with_filters() {
 
     env.gsctl(&["set", S, "count-i", "20"]).ok();
     env.gsctl(&["set", S, "name-s", "A"]).ok();
-    env.gsctl(&["set", "org.gnome.desktop.screensaver", "lock-delay", "9"]).ok();
+    env.gsctl(&["set", "org.gnome.desktop.screensaver", "logout-delay", "9"]).ok();
     env.gsctl(&["reset", S, "count-i"]).ok();
 
     let h = env.gsctl(&["history"]).ok();
@@ -446,7 +446,7 @@ fn history_lists_newest_first_with_filters() {
         .iter()
         .map(|e| (e["op"].as_str().unwrap(), e["key"].as_str().unwrap()))
         .collect();
-    assert_eq!(ops, [("reset", "count-i"), ("set", "lock-delay"), ("set", "name-s"), ("set", "count-i")]);
+    assert_eq!(ops, [("reset", "count-i"), ("set", "logout-delay"), ("set", "name-s"), ("set", "count-i")]);
 
     assert_eq!(env.gsctl(&["history", "--limit", "1"]).ok()["entries"].as_array().unwrap().len(), 1);
     assert_eq!(env.gsctl(&["history", "--key", "count-i"]).ok()["total"], 2);

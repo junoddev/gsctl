@@ -34,7 +34,7 @@ fn streams_changes_as_schema_and_key() {
     let events = watch_while(
         &env,
         "--count 2 --timeout 20",
-        &["set org.gsctl.test count-i 11", "set org.gnome.desktop.screensaver lock-delay 7"],
+        &["set org.gsctl.test count-i 11", "set org.gnome.desktop.screensaver logout-delay 7"],
     );
     assert_eq!(events[0]["event"], "ready");
     assert!(events[0]["schemas"].as_u64().unwrap() > 3);
@@ -44,7 +44,7 @@ fn streams_changes_as_schema_and_key() {
         changes,
         [
             ("org.gsctl.test", "count-i", &Value::from(11)),
-            ("org.gnome.desktop.screensaver", "lock-delay", &Value::from(7))
+            ("org.gnome.desktop.screensaver", "logout-delay", &Value::from(7))
         ]
     );
     assert_eq!(events[1]["event"], "changed");
@@ -57,16 +57,16 @@ fn schema_filter() {
     let events = watch_while(
         &env,
         "--schema org.gnome.desktop --count 1 --timeout 20",
-        &["set org.gsctl.test count-i 11", "set org.gnome.desktop.screensaver lock-delay 7"],
+        &["set org.gsctl.test count-i 11", "set org.gnome.desktop.screensaver logout-delay 7"],
     );
     assert_eq!(events.len(), 2);
-    assert_eq!(events[1]["key"], "lock-delay");
+    assert_eq!(events[1]["key"], "logout-delay");
 }
 
 #[test]
 fn reports_resets_and_custom_keybindings() {
     let env = TestEnv::new();
-    env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis"]).ok();
+    env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis", "--yes"]).ok();
     let events = watch_while(
         &env,
         "--count 1 --timeout 20 --schema org.gnome.settings-daemon.plugins.media-keys.custom-keybinding",

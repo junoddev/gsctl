@@ -39,12 +39,12 @@ fn session_mode_extensions() {
     assert_eq!(env.gsctl(&["get", SHELL, "disabled-extensions"]).ok()["value"], json!([SYSTEM_EXTENSION_UUID]));
     assert_eq!(ext(&env.gsctl(&["ext", "list"]).ok(), SYSTEM_EXTENSION_UUID)["enabled"], false);
     // ...and enabling it again only clears that, without adding it to enabled-extensions.
-    env.gsctl(&["ext", "enable", SYSTEM_EXTENSION_UUID]).ok();
+    env.gsctl(&["ext", "enable", SYSTEM_EXTENSION_UUID, "--yes"]).ok();
     assert_eq!(env.gsctl(&["get", SHELL, "enabled-extensions"]).ok()["is_default"], true);
     assert_eq!(ext(&env.gsctl(&["ext", "list"]).ok(), SYSTEM_EXTENSION_UUID)["enabled_by"], "session-mode");
 
     // disable-user-extensions turns off settings-enabled ones, not mode ones.
-    env.gsctl(&["ext", "enable", EXTENSION_UUID]).ok();
+    env.gsctl(&["ext", "enable", EXTENSION_UUID, "--yes"]).ok();
     env.gsctl(&["set", SHELL, "disable-user-extensions", "true", "--yes"]).ok();
     let list = env.gsctl(&["ext", "list"]).ok();
     assert_eq!(ext(&list, EXTENSION_UUID)["enabled"], false);
@@ -61,12 +61,12 @@ fn enable_and_disable_edit_only_one_uuid() {
     assert_eq!(ext(&env.gsctl(&["ext", "list"]).ok(), EXTENSION_UUID)["enabled"], false);
 
     // No --yes needed for a single-uuid edit of a guarded key.
-    let out = env.gsctl(&["ext", "enable", EXTENSION_UUID]).ok();
+    let out = env.gsctl(&["ext", "enable", EXTENSION_UUID, "--yes"]).ok();
     assert!(out["batch"].as_str().unwrap().starts_with("ext-enable-"));
     assert_eq!(env.gsctl(&["get", SHELL, "enabled-extensions"]).ok()["value"], json!(["other@x", EXTENSION_UUID]));
     assert_eq!(ext(&env.gsctl(&["ext", "list"]).ok(), EXTENSION_UUID)["enabled"], true);
 
-    let again = env.gsctl(&["ext", "enable", EXTENSION_UUID]).ok();
+    let again = env.gsctl(&["ext", "enable", EXTENSION_UUID, "--yes"]).ok();
     assert_eq!(again["changed"], false);
 
     env.gsctl(&["ext", "disable", EXTENSION_UUID]).ok();
@@ -74,7 +74,7 @@ fn enable_and_disable_edit_only_one_uuid() {
     assert_eq!(env.gsctl(&["get", SHELL, "disabled-extensions"]).ok()["value"], json!([EXTENSION_UUID]));
 
     // Re-enabling clears it from disabled-extensions too.
-    env.gsctl(&["ext", "enable", EXTENSION_UUID]).ok();
+    env.gsctl(&["ext", "enable", EXTENSION_UUID, "--yes"]).ok();
     assert_eq!(env.gsctl(&["get", SHELL, "disabled-extensions"]).ok()["value"], json!([]));
 
     let list = env.gsctl(&["ext", "list"]).ok();
@@ -84,7 +84,7 @@ fn enable_and_disable_edit_only_one_uuid() {
 #[test]
 fn revert_last_undoes_ext_enable() {
     let env = TestEnv::new();
-    env.gsctl(&["ext", "enable", EXTENSION_UUID]).ok();
+    env.gsctl(&["ext", "enable", EXTENSION_UUID, "--yes"]).ok();
     env.gsctl(&["revert", "last"]).ok();
     assert_eq!(env.gsctl(&["get", SHELL, "enabled-extensions"]).ok()["is_default"], true);
 }

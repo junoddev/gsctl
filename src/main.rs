@@ -202,11 +202,15 @@ enum ExtCommand {
     List,
     /// One extension's metadata and settings (keys with current values).
     Info { uuid: String },
-    /// Enable an installed extension (adds just its uuid; no --yes needed).
+    /// Enable an installed extension (adds just its uuid). Its code runs
+    /// inside GNOME Shell, so this needs --yes.
     Enable {
         uuid: String,
         #[arg(long)]
         dry_run: bool,
+        /// Confirm running the extension's code.
+        #[arg(long)]
+        yes: bool,
     },
     /// Disable an extension (removes just its uuid; no --yes needed).
     Disable {
@@ -230,7 +234,8 @@ enum KeysCommand {
     /// Accelerators bound to more than one action.
     Conflicts,
     /// Add a custom keybinding that runs COMMAND. Refuses an accelerator
-    /// that's already bound unless --force.
+    /// that's already bound unless --force. Needs --yes, since it sets up a
+    /// command to run.
     Add {
         name: String,
         accel: String,
@@ -241,6 +246,9 @@ enum KeysCommand {
         /// Show the writes without making them.
         #[arg(long)]
         dry_run: bool,
+        /// Confirm adding a binding that runs COMMAND.
+        #[arg(long)]
+        yes: bool,
     },
     /// Remove a custom keybinding, by name, path or `customN`. `gsctl revert
     /// last` brings it back.
@@ -287,15 +295,15 @@ fn run(cli: &Cli) -> Result<Option<Value>> {
         Command::Ext(e) => match e {
             ExtCommand::List => ext::list(&index),
             ExtCommand::Info { uuid } => ext::info(&index, uuid),
-            ExtCommand::Enable { uuid, dry_run } => ext::set_enabled(&index, uuid, true, *dry_run),
-            ExtCommand::Disable { uuid, dry_run } => ext::set_enabled(&index, uuid, false, *dry_run),
+            ExtCommand::Enable { uuid, dry_run, yes } => ext::set_enabled(&index, uuid, true, *dry_run, *yes),
+            ExtCommand::Disable { uuid, dry_run } => ext::set_enabled(&index, uuid, false, *dry_run, false),
         },
         Command::Keys(k) => match k {
             KeysCommand::Find { accel } => keys::find(&index, accel),
             KeysCommand::List { custom } => keys::list(&index, *custom),
             KeysCommand::Conflicts => keys::conflicts(&index),
-            KeysCommand::Add { name, accel, command, force, dry_run } => {
-                let opts = AddOpts { name, accel, command, force: *force, dry_run: *dry_run };
+            KeysCommand::Add { name, accel, command, force, dry_run, yes } => {
+                let opts = AddOpts { name, accel, command, force: *force, dry_run: *dry_run, yes: *yes };
                 keys::add(&index, &opts)
             }
             KeysCommand::Remove { binding, dry_run } => keys::remove(&index, binding, *dry_run),

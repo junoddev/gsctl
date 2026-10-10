@@ -203,6 +203,8 @@ pub struct AddOpts<'a> {
     pub command: &'a str,
     pub force: bool,
     pub dry_run: bool,
+    /// Confirm the guarded writes (`command` and the custom-keybindings list run code).
+    pub yes: bool,
 }
 
 /// Create a custom keybinding at the first free `customN` path.
@@ -246,13 +248,13 @@ pub fn add(index: &Index, opts: &AddOpts) -> Result<Value> {
     list.push(path.clone());
 
     let batch = journal::new_id(Some("keys-add"));
-    let wopts = WriteOpts { path: Some(&path), dry_run: opts.dry_run, yes: false };
+    let wopts = WriteOpts { path: Some(&path), dry_run: opts.dry_run, yes: opts.yes };
     let tags = Tags { reverts: None, batch: Some(&batch) };
     let mut writes = Vec::new();
     for (key, value) in [("name", opts.name), ("command", opts.command), ("binding", opts.accel)] {
         writes.push(write(custom, key, &wopts, "keys-add", Action::Set(value.into()), tags)?);
     }
-    let lopts = WriteOpts { path: None, dry_run: opts.dry_run, yes: false };
+    let lopts = WriteOpts { path: None, dry_run: opts.dry_run, yes: opts.yes };
     writes.push(write(media, CUSTOM_LIST_KEY, &lopts, "keys-add", Action::Set(list.to_variant()), tags)?);
 
     Ok(json!({
@@ -308,9 +310,10 @@ pub fn remove(index: &Index, which: &str, dry_run: bool) -> Result<Value> {
     let list: Vec<&String> = existing.iter().filter(|p| **p != path).collect();
     // Back to the default rather than pinning an empty list.
     let action = if list.is_empty() { Action::Reset } else { Action::Set(list.to_variant()) };
-    let lopts = WriteOpts { path: None, dry_run, yes: false };
+    // Removing runs nothing, so it skips the guard on the list.
+    let lopts = WriteOpts { path: None, dry_run, yes: true };
     let mut writes = vec![write(media, CUSTOM_LIST_KEY, &lopts, "keys-remove", action, tags)?];
-    let wopts = WriteOpts { path: Some(&path), dry_run, yes: false };
+    let wopts = WriteOpts { path: Some(&path), dry_run, yes: true };
     for key in custom.keys() {
         if settings.user_value(&key).is_some() {
             writes.push(write(custom, &key, &wopts, "keys-remove", Action::Reset, tags)?);

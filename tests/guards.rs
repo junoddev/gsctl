@@ -88,3 +88,72 @@ fn apply_checks_instance_paths_and_their_guards() {
     assert_eq!(env.gsctl(&["apply", &file]).status, 6);
     env.gsctl(&["apply", &file, "--yes"]).ok();
 }
+
+const CUSTOM0: &str = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/";
+const MEDIA_KEYS: &str = "org.gnome.settings-daemon.plugins.media-keys";
+const SHELL: &str = "org.gnome.shell";
+
+#[test]
+fn code_executing_keys_need_yes_and_say_so() {
+    let env = TestEnv::new();
+    let k = env.gsctl(&["schema", CUSTOM, "command"]).ok();
+    assert!(k["guarded"].is_string(), "{k}");
+    assert_eq!(k["executes"], true);
+    let plain = env.gsctl(&["schema", "org.gnome.desktop.screensaver", "lock-enabled"]).ok();
+    assert!(plain["guarded"].is_string());
+    assert_eq!(plain["executes"], false);
+    assert_eq!(env.gsctl(&["schema", "org.gsctl.test", "count-i"]).ok()["executes"], false);
+
+    let dry = env.gsctl(&["set", CUSTOM, "command", "touch x", "--path", CUSTOM0, "--dry-run"]).ok();
+    assert_eq!(dry["requires_yes"], true);
+    assert_eq!(dry["executes"], true);
+    assert!(dry["guarded"].is_string());
+    let r = env.gsctl(&["set", CUSTOM, "command", "touch x", "--path", CUSTOM0]);
+    assert_eq!(r.status, 6, "{}", r.stderr);
+    let r = env.gsctl(&["set", MEDIA_KEYS, "custom-keybindings", &format!(r#"["{CUSTOM0}"]"#)]);
+    assert_eq!(r.status, 6, "{}", r.stderr);
+    env.gsctl(&["set", CUSTOM, "command", "true", "--path", CUSTOM0, "--yes"]).ok();
+}
+
+#[test]
+fn extension_lists_are_guarded_wholesale() {
+    let env = TestEnv::new();
+    assert_eq!(env.gsctl(&["set", SHELL, "disabled-extensions", r#"["a@b"]"#]).status, 6);
+    let dry = env.gsctl(&["set", SHELL, "enabled-extensions", r#"["a@b"]"#, "--dry-run"]).ok();
+    assert_eq!(dry["executes"], true);
+}
+
+#[test]
+fn ext_enable_needs_yes_but_disable_does_not() {
+    let env = TestEnv::new();
+    let uuid = common::EXTENSION_UUID;
+    let dry = env.gsctl(&["ext", "enable", uuid, "--dry-run"]).ok();
+    assert_eq!(dry["requires_yes"], true, "{dry}");
+    assert_eq!(dry["executes"], true);
+    let r = env.gsctl(&["ext", "enable", uuid]);
+    assert_eq!(r.status, 6, "{}", r.stderr);
+    assert_eq!(r.error()["error"]["code"], "guarded");
+    assert_eq!(env.gsctl(&["get", SHELL, "enabled-extensions"]).ok()["is_default"], true);
+    env.gsctl(&["ext", "enable", uuid, "--yes"]).ok();
+    assert_eq!(env.gsctl(&["get", SHELL, "enabled-extensions"]).ok()["value"], json!([uuid]));
+
+    let dry = env.gsctl(&["ext", "disable", uuid, "--dry-run"]).ok();
+    assert_eq!(dry["requires_yes"], false);
+    env.gsctl(&["ext", "disable", uuid]).ok();
+    // Already enabled (by the session mode): nothing to confirm.
+    let sys = common::SYSTEM_EXTENSION_UUID;
+    assert_eq!(env.gsctl(&["ext", "enable", sys, "--dry-run"]).ok()["requires_yes"], false);
+}
+
+#[test]
+fn keys_add_needs_yes() {
+    let env = TestEnv::new();
+    let r = env.gsctl(&["keys", "add", "Term", "<Super>F9", "ptyxis"]);
+    assert_eq!(r.status, 6, "{}", r.stderr);
+    assert_eq!(env.gsctl(&["get", MEDIA_KEYS, "custom-keybindings"]).ok()["is_default"], true);
+    let dry = env.gsctl(&["keys", "add", "Term", "<Super>F9", "ptyxis", "--dry-run"]).ok();
+    assert!(dry["writes"].as_array().unwrap().iter().any(|w| w["executes"] == true), "{dry}");
+    env.gsctl(&["keys", "add", "Term", "<Super>F9", "ptyxis", "--yes"]).ok();
+    // Removing a binding runs nothing, so it needs no --yes.
+    env.gsctl(&["keys", "remove", "Term"]).ok();
+}

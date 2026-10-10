@@ -138,6 +138,11 @@
       <default>0</default>
       <summary>Time before session lock</summary>
     </key>
+    <!-- An unguarded key (default 0 here, not GNOME's 7200). -->
+    <key name="logout-delay" type="u">
+      <default>0</default>
+      <summary>Time before logout option</summary>
+    </key>
   </schema>
 
   <!-- Installed system-wide for system@gsctl.test, which names it only in its JS. -->
