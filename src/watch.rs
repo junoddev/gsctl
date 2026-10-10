@@ -14,7 +14,6 @@ use gio::prelude::*;
 use serde_json::{Value, json};
 
 use crate::commands::matches_prefix;
-use crate::convert::to_json;
 use crate::error::{Error, Result};
 use crate::index::Index;
 
@@ -87,7 +86,7 @@ pub fn watch(index: &Index, opts: &WatchOpts) -> Result<Option<Value>> {
                 "schema": schema,
                 "path": path,
                 "key": key,
-                "value": to_json(&s.value(key)),
+                "value": crate::guard::shown(key, &s.value(key)),
                 "is_default": s.user_value(key).is_none(),
             }));
             seen.set(seen.get() + 1);

@@ -551,7 +551,7 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
         })
         .collect();
     guarded.extend(unbacked_prunes(&all_file_areas, &listed, &pruned));
-    let change_json = |p: &Planned| json!({ "schema": p.entry.id(), "path": p.path, "key": p.key, "old": to_json(&p.old), "new": to_json(&p.value) });
+    let change_json = |p: &Planned| json!({ "schema": p.entry.id(), "path": p.path, "key": p.key, "old": guard::shown(&p.key, &p.old), "new": guard::shown(&p.key, &p.value) });
     let prune_json = |list: Vec<Value>| if opts.prune { Value::from(list) } else { Value::Null };
 
     if opts.dry_run {

@@ -11,6 +11,8 @@
 //! see [`Guard::applies_to`]. Extension keys that look like commands are guarded by name and type,
 //! since no list can cover every extension.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use serde_json::{Value, json};
 
 struct Rule {
@@ -259,6 +261,29 @@ pub fn check_write(entry: &crate::index::Entry, path: Option<&str>, key: &str, n
 /// one). Secrets aren't exported and their values aren't journaled.
 pub fn is_secret(key: &str, ty: &str) -> bool {
     key.contains("password") && matches!(ty, "s" | "ms" | "ay" | "as")
+}
+
+/// Set by `--show-secrets` for the rest of the process.
+static SHOW_SECRETS: AtomicBool = AtomicBool::new(false);
+
+/// Show secret values in output instead of [`redacted`] (`--show-secrets`).
+pub fn show_secrets(on: bool) {
+    SHOW_SECRETS.store(on, Ordering::Relaxed);
+}
+
+/// What output shows in place of a secret value.
+pub fn redacted() -> Value {
+    json!({ "redacted": true })
+}
+
+/// `v`, the value of `key`, as output JSON: [`redacted`] if it's a secret,
+/// unless `--show-secrets`.
+pub fn shown(key: &str, v: &glib::Variant) -> Value {
+    if is_secret(key, v.type_().as_str()) && !SHOW_SECRETS.load(Ordering::Relaxed) {
+        redacted()
+    } else {
+        crate::convert::to_json(v)
+    }
 }
 
 /// The schema id GNOME's convention gives the schema at a dconf path:

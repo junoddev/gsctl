@@ -272,7 +272,7 @@ fn secrets_stay_out_of_the_journal_and_exports() {
     let r = env.gsctl(&["revert", "last", "--yes"]);
     assert_eq!(r.status, 2, "{}", r.stderr);
     assert!(r.error()["error"]["message"].as_str().unwrap().contains("secret"), "{}", r.stderr);
-    assert_eq!(env.gsctl(&["get", PROXY, "authentication-password"]).ok()["value"], "hunter2");
+    assert_eq!(env.gsctl(&["get", PROXY, "authentication-password", "--show-secrets"]).ok()["value"], "hunter2");
 
     for args in [vec!["export"], vec!["export", "--include-state"]] {
         let doc = env.gsctl(&args).ok();
@@ -282,6 +282,56 @@ fn secrets_stay_out_of_the_journal_and_exports() {
         let skipped = doc["skipped_state"].as_array().unwrap();
         assert!(skipped.iter().any(|s| s["key"] == "authentication-password" && s["reason"] == "secret"), "{doc}");
     }
+}
+
+#[test]
+fn secret_values_are_redacted_in_output() {
+    let env = TestEnv::new();
+    let redacted = json!({"redacted": true});
+    let pw = "authentication-password";
+    let out = env.gsctl(&["set", PROXY, pw, "hunter2", "--yes"]).ok();
+    assert_eq!(out["new"], redacted, "{out}");
+    assert_eq!(out["value"], redacted);
+    assert_eq!(out["old"], redacted, "even the old value");
+    let dry = env.gsctl(&["set", PROXY, pw, "other", "--dry-run"]).ok();
+    assert_eq!((&dry["old"], &dry["new"]), (&redacted, &redacted), "{dry}");
+    let reset = env.gsctl(&["reset", PROXY, pw, "--dry-run"]).ok();
+    assert_eq!(reset["old"], redacted);
+
+    let outputs = [
+        env.gsctl(&["get", PROXY, pw]),
+        env.gsctl(&["schema", PROXY, pw]),
+        env.gsctl(&["schema", PROXY]),
+        env.gsctl(&["schema", PROXY, "--full"]),
+        env.gsctl(&["changed"]),
+        env.gsctl(&["search", "proxy password"]),
+        env.gsctl(&["get", PROXY, pw, "--format", "text"]),
+        env.gsctl(&["changed", "--format", "text"]),
+    ];
+    for r in &outputs {
+        assert_eq!(r.status, 0, "{}", r.stderr);
+        assert!(!r.stdout.contains("hunter2"), "{}", r.stdout);
+    }
+    assert_eq!(outputs[0].json()["value"], redacted);
+    assert_eq!(outputs[1].json()["value"], redacted);
+    assert_eq!(outputs[6].stdout.trim(), "<redacted>");
+    assert!(outputs[7].stdout.contains("<redacted>"), "{}", outputs[7].stdout);
+
+    // apply shows neither side.
+    let doc = json!({"gsctl": 1, "area": "other", "settings": {PROXY: {pw: "from-a-file"}}});
+    let dry = env.gsctl(&["apply", &write_json(&env, "pw.json", &doc), "--dry-run"]).ok();
+    assert_eq!(dry["changes"][0]["old"], redacted, "{dry}");
+    assert_eq!(dry["changes"][0]["new"], redacted);
+
+    // --show-secrets opts out.
+    assert_eq!(env.gsctl(&["get", PROXY, pw, "--show-secrets"]).ok()["value"], "hunter2");
+    assert_eq!(env.gsctl(&["schema", PROXY, pw, "--show-secrets"]).ok()["value"], "hunter2");
+    let changed = env.gsctl(&["changed", "--show-secrets"]).ok();
+    assert!(changed.to_string().contains("hunter2"), "{changed}");
+    let dry = env.gsctl(&["set", PROXY, pw, "x", "--dry-run", "--show-secrets"]).ok();
+    assert_eq!((dry["old"].as_str(), dry["new"].as_str()), (Some("hunter2"), Some("x")));
+    // Only secrets are redacted.
+    assert_eq!(env.gsctl(&["get", PROXY, "host"]).ok()["value"], "");
 }
 
 // --- apply --prune -------------------------------------------------------------

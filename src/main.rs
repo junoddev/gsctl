@@ -102,6 +102,9 @@ GNOME's words may not be yours: try a single word (\"dark\", not \"dark mode\").
         /// Describe every key of the schema in full.
         #[arg(long)]
         full: bool,
+        /// Show secret values (passwords) instead of {"redacted": true}.
+        #[arg(long)]
+        show_secrets: bool,
     },
     /// Print a key's current value. SCHEMA KEY can also be one schema.key or
     /// /dconf/path/key argument.
@@ -113,6 +116,9 @@ GNOME's words may not be yours: try a single word (\"dark\", not \"dark mode\").
         /// Instance path for a relocatable schema.
         #[arg(long)]
         path: Option<String>,
+        /// Show secret values (passwords) instead of {"redacted": true}.
+        #[arg(long)]
+        show_secrets: bool,
     },
     /// Validate and write a value. VALUE is JSON (true, 42, "text", ["a","b"]),
     /// GVariant text (@as [], ('xkb', 'us')), or bare text for string keys.
@@ -148,6 +154,9 @@ Check with --dry-run first. `gsctl schema SCHEMA KEY` shows the type and allowed
         /// Confirm a change to a guarded key.
         #[arg(long)]
         yes: bool,
+        /// Show secret values (passwords) instead of {"redacted": true}.
+        #[arg(long)]
+        show_secrets: bool,
     },
     /// Reset a key to its default.
     Reset {
@@ -164,6 +173,9 @@ Check with --dry-run first. `gsctl schema SCHEMA KEY` shows the type and allowed
         /// Confirm a change to a guarded key.
         #[arg(long)]
         yes: bool,
+        /// Show secret values (passwords) instead of {"redacted": true}.
+        #[arg(long)]
+        show_secrets: bool,
     },
     /// Export customised settings as JSON state files, one per area. Prints a
     /// single document, or writes <area>.json files with --out. Machine state
@@ -236,6 +248,9 @@ Then commit the directory, and on another machine (or later):
         /// Exit after this many seconds.
         #[arg(long)]
         timeout: Option<u64>,
+        /// Show secret values (passwords) instead of {"redacted": true}.
+        #[arg(long)]
+        show_secrets: bool,
     },
     /// Check that gsctl can see and change this session's real settings
     /// (session bus, dconf, sandboxing). Run it first in a new environment.
@@ -291,6 +306,9 @@ Then commit the directory, and on another machine (or later):
         /// Also list keys that look like app state, marked with "state".
         #[arg(long)]
         include_state: bool,
+        /// Show secret values (passwords) instead of {"redacted": true}.
+        #[arg(long)]
+        show_secrets: bool,
     },
     /// Print a shell completion script.
     #[command(after_help = "Install:
@@ -419,8 +437,9 @@ fn run(cli: &Cli, text: bool) -> Result<Option<Value>> {
     if let Command::Commands = cli.command {
         return Ok(Some(commands_json()));
     }
+    gsctl::guard::show_secrets(shows_secrets(&cli.command));
     let index = Index::load()?;
-    if let Command::Watch { schema, count, timeout } = &cli.command {
+    if let Command::Watch { schema, count, timeout, .. } = &cli.command {
         return watch::watch(&index, &WatchOpts { prefixes: schema, count: *count, timeout: *timeout, text });
     }
     match &cli.command {
@@ -428,7 +447,7 @@ fn run(cli: &Cli, text: bool) -> Result<Option<Value>> {
             let opts = commands::SearchOpts { limit: *limit, prefixes: schema, all: *all };
             commands::search(&index, &query.join(" "), &opts)
         }
-        Command::Schema { schema, key, path, full } => {
+        Command::Schema { schema, key, path, full, .. } => {
             // One schema.key or /dconf/path/key argument.
             let split = match (schema, key) {
                 (Some(s), None) => commands::split_target(&index, s),
@@ -443,11 +462,11 @@ fn run(cli: &Cli, text: bool) -> Result<Option<Value>> {
                 None => commands::schema_with(&index, schema.as_deref(), key.as_deref(), path.as_deref(), full),
             }
         }
-        Command::Get { schema, key, path } => {
+        Command::Get { schema, key, path, .. } => {
             let (s, k, p) = commands::target(&index, schema, key.as_deref(), path.as_deref())?;
             commands::get(&index, &s, &k, p.as_deref())
         }
-        Command::Set { schema, key, value, path, dry_run, yes } => {
+        Command::Set { schema, key, value, path, dry_run, yes, .. } => {
             // `set schema.key VALUE`: the value arrives in KEY's place.
             let (key, value) = match value {
                 Some(v) => (Some(key.as_str()), v),
@@ -457,12 +476,12 @@ fn run(cli: &Cli, text: bool) -> Result<Option<Value>> {
             let opts = WriteOpts { path: p.as_deref(), dry_run: *dry_run, yes: *yes };
             commands::set(&index, &s, &k, value, &opts)
         }
-        Command::Reset { schema, key, path, dry_run, yes } => {
+        Command::Reset { schema, key, path, dry_run, yes, .. } => {
             let (s, k, p) = commands::target(&index, schema, key.as_deref(), path.as_deref())?;
             let opts = WriteOpts { path: p.as_deref(), dry_run: *dry_run, yes: *yes };
             commands::reset(&index, &s, &k, &opts)
         }
-        Command::Changed { schema, include_state } => commands::changed(&index, schema, *include_state),
+        Command::Changed { schema, include_state, .. } => commands::changed(&index, schema, *include_state),
         Command::Commands => unreachable!("handled above"),
         Command::Export { area, out, include_state, include_remote } => {
             let opts = ExportOpts {
@@ -500,6 +519,19 @@ fn run(cli: &Cli, text: bool) -> Result<Option<Value>> {
         Command::Watch { .. } | Command::Completions { .. } | Command::Man => unreachable!("handled above"),
     }
     .map(Some)
+}
+
+/// `--show-secrets`, on the commands that have it.
+fn shows_secrets(c: &Command) -> bool {
+    match c {
+        Command::Schema { show_secrets, .. }
+        | Command::Get { show_secrets, .. }
+        | Command::Set { show_secrets, .. }
+        | Command::Reset { show_secrets, .. }
+        | Command::Watch { show_secrets, .. }
+        | Command::Changed { show_secrets, .. } => *show_secrets,
+        _ => false,
+    }
 }
 
 fn command_name(c: &Command) -> &'static str {

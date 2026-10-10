@@ -55,7 +55,7 @@ fn key_json(entry: &Entry, key: &SettingsSchemaKey, settings: Option<&gio::Setti
     out["origin"] = entry.origin.to_json();
     if let Some(s) = settings {
         let o = out.as_object_mut().unwrap();
-        o.insert("value".into(), to_json(&s.value(&name)));
+        o.insert("value".into(), guard::shown(&name, &s.value(&name)));
         o.insert("is_default".into(), s.user_value(&name).is_none().into());
         // The effective default includes vendor overrides (e.g. Ubuntu's).
         if let Some(d) = s.default_value(&name) {
@@ -71,7 +71,7 @@ fn key_brief(entry: &Entry, key: &SettingsSchemaKey, settings: Option<&gio::Sett
     let name = key.name();
     let mut out = json!({ "key": name.as_str(), "type": key.value_type().as_str() });
     if let Some(s) = settings {
-        out["value"] = truncated(to_json(&s.value(&name)));
+        out["value"] = truncated(guard::shown(&name, &s.value(&name)));
         out["is_default"] = s.user_value(&name).is_none().into();
     }
     out["summary"] = key.summary().map(|s| s.to_string()).into();
@@ -305,7 +305,7 @@ fn key_hit(entry: &Entry, key: &SettingsSchemaKey) -> Value {
         "type": key.value_type().as_str(),
         "summary": key.summary().map(|s| s.to_string()).unwrap_or_default(),
         "description": key.description().map(|s| trim_text(&s, DESCRIPTION_CHARS)),
-        "value": settings.as_ref().map_or(Value::Null, |s| truncated(to_json(&s.value(&name)))),
+        "value": settings.as_ref().map_or(Value::Null, |s| truncated(guard::shown(&name, &s.value(&name)))),
         "default": truncated(to_json(&default)),
         "range": range_json(key),
         "guarded": guard::check_entry(entry, None, &name).map(|g| g.reason),
@@ -341,7 +341,7 @@ pub fn get(index: &Index, schema: &str, key: &str, path: Option<&str>) -> Result
         "path": path,
         "key": key,
         "type": k.value_type().as_str(),
-        "value": to_json(&settings.value(key)),
+        "value": guard::shown(key, &settings.value(key)),
         "is_default": settings.user_value(key).is_none(),
     }))
 }
@@ -441,8 +441,8 @@ pub(crate) fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action
         "path": opts.path,
         "key": key,
         "op": op,
-        "old": to_json(&old),
-        "new": to_json(&new),
+        "old": guard::shown(key, &old),
+        "new": guard::shown(key, &new),
         "changed": old != new || (is_reset && old_user.is_some()),
         "dry_run": opts.dry_run,
     });
@@ -482,10 +482,10 @@ pub(crate) fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action
         return Err(Error::Internal(format!(
             "the {op} did not take effect: {schema} {key} still reads {}. Is dconf-service reachable on the \
              session bus (DBUS_SESSION_BUS_ADDRESS)?",
-            to_json(&now)
+            guard::shown(key, &now)
         )));
     }
-    out["value"] = to_json(&now);
+    out["value"] = guard::shown(key, &now);
     let change = journal::Change {
         op,
         schema: &schema,
@@ -833,7 +833,7 @@ pub fn changed(index: &Index, prefixes: &[String], include_state: bool) -> Resul
                 "path": path,
                 "key": name,
                 "type": user.type_().as_str(),
-                "value": to_json(&user),
+                "value": guard::shown(&name, &user),
                 "default": to_json(&default),
             });
             if let Some(reason) = state {
