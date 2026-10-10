@@ -29,7 +29,7 @@ pub(crate) fn range_json(key: &SettingsSchemaKey) -> Value {
 
 /// Full description of one key. `settings` is `None` for a relocatable schema
 /// without a path, which has no current value.
-fn key_json(entry: &Entry, key: &SettingsSchemaKey, settings: Option<&gio::Settings>) -> Value {
+fn key_json(entry: &Entry, key: &SettingsSchemaKey, settings: Option<&gio::Settings>, path: Option<&str>) -> Value {
     let name = key.name();
     let ty = key.value_type();
     let mut out = json!({
@@ -41,8 +41,10 @@ fn key_json(entry: &Entry, key: &SettingsSchemaKey, settings: Option<&gio::Setti
         "description": key.description().map(|s| s.to_string()),
         "range": range_json(key),
         "default": to_json(&key.default_value()),
-        "guarded": guard::check(&entry.id(), &name),
     });
+    let guard = guard::check_at(&entry.id(), path, &name);
+    out["guarded"] = guard.map(|g| g.reason).into();
+    out["executes"] = guard.is_some_and(|g| g.executes).into();
     if let Some(s) = settings {
         let o = out.as_object_mut().unwrap();
         o.insert("value".into(), to_json(&s.value(&name)));
@@ -68,10 +70,10 @@ pub fn schema(index: &Index, schema: Option<&str>, key: Option<&str>, path: Opti
     };
     if let Some(k) = key {
         let key = entry.key(k)?;
-        return Ok(key_json(entry, &key, settings.as_ref()));
+        return Ok(key_json(entry, &key, settings.as_ref(), path));
     }
     let keys: Vec<Value> =
-        entry.keys().iter().map(|k| key_json(entry, &entry.schema.key(k), settings.as_ref())).collect();
+        entry.keys().iter().map(|k| key_json(entry, &entry.schema.key(k), settings.as_ref(), path)).collect();
     let mut out = entry.summary_json();
     let o = out.as_object_mut().unwrap();
     o.insert("instance_path".into(), path.into());
@@ -234,7 +236,7 @@ pub(crate) fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action
     if !settings.is_writable(key) {
         return Err(Error::NotWritable { schema, key: key.to_string() });
     }
-    let guarded = guard::check(&schema, key);
+    let guarded = guard::check_at(&schema, opts.path, key);
     let mut out = json!({
         "schema": schema,
         "path": opts.path,
@@ -247,13 +249,17 @@ pub(crate) fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action
     });
     if opts.dry_run {
         out["requires_yes"] = guarded.is_some().into();
+        if let Some(g) = guarded {
+            out["guarded"] = g.reason.into();
+            out["executes"] = g.executes.into();
+        }
         return Ok(out);
     }
     doctor::require_writable()?;
-    if let Some(reason) = guarded
+    if let Some(g) = guarded
         && !opts.yes
     {
-        return Err(Error::Guarded { schema, key: key.to_string(), reason: reason.to_string() });
+        return Err(Error::Guarded { schema, key: key.to_string(), reason: g.reason.to_string() });
     }
 
     if is_reset {
@@ -357,7 +363,7 @@ pub fn revert(index: &Index, id: &str, force: bool, dry_run: bool, yes: bool) ->
     let prepared = target.iter().rev().map(|e| prepare_revert(index, e, force)).collect::<Result<Vec<_>>>()?;
     if !dry_run && !yes {
         for p in prepared.iter().filter(|p| !p.targeted) {
-            if let Some(reason) = guard::check(&p.entry.id(), &p.key) {
+            if let Some(reason) = guard::check_at(&p.entry.id(), p.path.as_deref(), &p.key).map(|g| g.reason) {
                 return Err(Error::Guarded { schema: p.entry.id(), key: p.key.clone(), reason: reason.to_string() });
             }
         }

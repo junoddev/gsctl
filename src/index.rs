@@ -2,6 +2,7 @@
 //! extension's own `schemas/` directory.
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use gio::prelude::*;
 use gio::{SettingsSchema, SettingsSchemaKey, SettingsSchemaSource};
@@ -27,6 +28,9 @@ impl Origin {
 pub struct Entry {
     pub schema: SettingsSchema,
     pub origin: Origin,
+    /// `(path, schema id)` of every fixed schema in the index, shared, so an
+    /// instance path can be checked without the index.
+    fixed_paths: Rc<[(String, String)]>,
 }
 
 impl Entry {
@@ -64,9 +68,7 @@ impl Entry {
                 )));
             }
             (true, Some(p)) => {
-                if !valid_path(p) {
-                    return Err(Error::Usage(format!("invalid path {p:?}: must start and end with '/'")));
-                }
+                self.check_instance_path(p)?;
                 Some(p)
             }
             (false, Some(_)) => {
@@ -78,6 +80,30 @@ impl Entry {
             (false, None) => None,
         };
         Ok(gio::Settings::new_full(&self.schema, None::<&gio::SettingsBackend>, path))
+    }
+
+    /// Whether `p` may hold an instance of this relocatable schema. It must
+    /// be a valid path; not the path of any installed fixed schema (writing
+    /// another schema's keys there would bypass that schema's guards and
+    /// types); and, for the listed relocatable schemas (custom keybindings,
+    /// Ptyxis profiles), below their usual prefix.
+    pub fn check_instance_path(&self, p: &str) -> Result<()> {
+        if !valid_path(p) {
+            return Err(Error::Usage(format!("invalid path {p:?}: must start and end with '/'")));
+        }
+        if let Some((_, owner)) = self.fixed_paths.iter().find(|(fixed, _)| fixed == p) {
+            return Err(Error::Usage(format!(
+                "{p} is the path of the fixed schema {owner}; use {owner} itself rather than {} --path",
+                self.id()
+            )));
+        }
+        let id = self.id();
+        if let Some(l) = LISTED.iter().find(|l| l.schema == id)
+            && !(p.starts_with(l.prefix) && p.len() > l.prefix.len())
+        {
+            return Err(Error::Usage(format!("{id} instances live below {}, not at {p}", l.prefix)));
+        }
+        Ok(())
     }
 
     pub fn summary_json(&self) -> Value {
@@ -97,6 +123,8 @@ struct Listed {
     list_key: &'static str,
     schema: &'static str,
     path: &'static str,
+    /// Where instances live; `--path` for `schema` must be below it.
+    prefix: &'static str,
 }
 
 const LISTED: &[Listed] = &[
@@ -105,12 +133,14 @@ const LISTED: &[Listed] = &[
         list_key: "custom-keybindings",
         schema: "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding",
         path: "{}",
+        prefix: "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/",
     },
     Listed {
         list_schema: "org.gnome.Ptyxis",
         list_key: "profile-uuids",
         schema: "org.gnome.Ptyxis.Profile",
         path: "/org/gnome/Ptyxis/Profiles/{}/",
+        prefix: "/org/gnome/Ptyxis/Profiles/",
     },
 ];
 
@@ -127,9 +157,10 @@ impl Index {
     pub fn load() -> Result<Index> {
         let default = SettingsSchemaSource::default();
         let mut entries: Vec<Entry> = Vec::new();
+        let no_paths: Rc<[(String, String)]> = Rc::from(Vec::new());
         let push = |entries: &mut Vec<Entry>, schema: SettingsSchema, origin: Origin| {
             if !entries.iter().any(|e| e.schema.id() == schema.id()) {
-                entries.push(Entry { schema, origin });
+                entries.push(Entry { schema, origin, fixed_paths: no_paths.clone() });
             }
         };
 
@@ -159,6 +190,11 @@ impl Index {
         }
 
         entries.sort_by_key(|e| e.id());
+        let fixed: Rc<[(String, String)]> =
+            entries.iter().filter_map(|e| Some((e.schema.path()?.to_string(), e.id()))).collect();
+        for e in &mut entries {
+            e.fixed_paths = fixed.clone();
+        }
         Ok(Index { entries })
     }
 
@@ -183,7 +219,7 @@ impl Index {
             let Ok(settings) = list.settings(None) else { continue };
             for item in settings.strv(l.list_key) {
                 let path = l.path.replace("{}", &item);
-                if valid_path(&path) {
+                if entry.check_instance_path(&path).is_ok() {
                     out.push((entry, path));
                 }
             }
