@@ -56,17 +56,23 @@ detail). `schema.key` and `/dconf/path/key` work as one argument too.
 
 Keys that can lock the user out, cut off remote access or break input
 (remote desktop, `input-sources`, lock and idle settings, all of `lockdown`,
-proxy, power `sleep-inactive-*`, accessibility, the extension lists) are
-refused without `--yes` (exit 6); a dry-run shows `"requires_yes": true`, and
+proxy, power `sleep-inactive-*`, accessibility, touchpad `send-events`,
+notification banners, the extension lists) are refused without `--yes`
+(exit 6). Keyboard `delay` and `repeat-interval` need it only below 100 and
+10 ms (`"guarded_below"`). A dry-run shows `"requires_yes": true`, and
 `gsctl schema <schema> <key>` and search hits show `"guarded"` (the reason).
 Get the user's explicit OK first, especially over a remote session.
 
 Some writes make GNOME run code, marked `"executes": true`: `keys add` (the
 shortcut runs a shell command), `ext enable` (the extension runs inside GNOME
 Shell), and keys like a custom shortcut's `command`, Ptyxis `custom-command`
-or the terminal's `exec`. Dry-run, show the user the exact command or
+or any default application's `exec`, and extension string keys named
+`*command*` or `exec*`. Dry-run, show the user the exact command or
 extension, and add `--yes` only after they agree. `keys remove` and
 `ext disable` don't need it.
+
+Passwords show as `{"redacted": true}`; don't ask for `--show-secrets`
+unless the user wants to see the value.
 
 Use `--path` only for relocatable instances at their usual place (custom
 shortcuts, Ptyxis profiles); gsctl refuses a fixed schema's path.
