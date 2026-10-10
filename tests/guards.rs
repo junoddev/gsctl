@@ -251,11 +251,18 @@ fn apply_reads_only_small_regular_files() {
     let env = TestEnv::new();
     let doc = json!({"gsctl": 1, "area": "other", "settings": {"org.gsctl.test": {"count-i": 42}}});
     let real = write_json(&env, "real.json", &doc);
+    // A symlink to a file we own is followed, as GNU Stow links dotfiles.
+    let stow = env.path("stow");
+    std::fs::create_dir_all(&stow).unwrap();
+    std::os::unix::fs::symlink(&real, stow.join("other.json")).unwrap();
+    let dry = env.gsctl(&["apply", stow.to_str().unwrap(), "--dry-run"]).ok();
+    assert_eq!(dry["changes"].as_array().unwrap().len(), 1, "{dry}");
+    // ...but not one to a file someone else owns.
     let link = env.path("link.json");
-    std::os::unix::fs::symlink(&real, &link).unwrap();
+    std::os::unix::fs::symlink("/etc/os-release", &link).unwrap();
     let r = env.gsctl(&["apply", link.to_str().unwrap(), "--dry-run"]);
     assert_eq!(r.status, 2, "{}", r.stderr);
-    assert!(r.error()["error"]["message"].as_str().unwrap().contains("symlink"), "{}", r.stderr);
+    assert!(r.error()["error"]["message"].as_str().unwrap().contains("don't own"), "{}", r.stderr);
 
     // A FIFO must not block.
     let fifo = env.path("fifo.json");

@@ -428,8 +428,8 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
     check_areas(opts.areas.iter().map(String::as_str), "--area: ")?;
 
     for file in &state_files(opts.files)? {
-        // No following a symlink, no blocking on a FIFO, and a size cap.
-        let text = crate::fsutil::read_small_or_why(file)
+        // A symlink only to a file we own, no blocking on a FIFO, and a size cap.
+        let text = crate::fsutil::read_user_file(file)
             .map_err(|why| Error::Usage(format!("cannot read {}: {why}", file.display())))?;
         let doc: Value = serde_json::from_str(&text)
             .map_err(|e| Error::Usage(format!("{} is not valid JSON: {e}", file.display())))?;

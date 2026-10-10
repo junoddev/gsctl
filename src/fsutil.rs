@@ -60,6 +60,21 @@ pub fn read_small_or_why(path: &Path) -> Result<String, String> {
     })
 }
 
+/// [`read_small_or_why`] for a file the user named, such as a state file for
+/// `apply`. A symlink is followed when it ends at a regular file we own:
+/// dotfiles managers such as GNU Stow link each file into place.
+pub fn read_user_file(path: &Path) -> Result<String, String> {
+    if !fs::symlink_metadata(path).map_err(|e| e.to_string())?.file_type().is_symlink() {
+        return read_small_or_why(path);
+    }
+    let target = fs::canonicalize(path).map_err(|e| format!("it is a symlink that can't be resolved: {e}"))?;
+    let meta = fs::metadata(&target).map_err(|e| e.to_string())?;
+    if Some(meta.uid()) != euid() {
+        return Err(format!("it is a symlink to {}, which you don't own", target.display()));
+    }
+    read_small_or_why(&target).map_err(|why| format!("it is a symlink to {}: {why}", target.display()))
+}
+
 /// Open `path` for appending, creating it with mode 0600, and refusing a
 /// symlink at `path`. An existing file, and the directory it's in, are
 /// tightened to 0600 and 0700 if we own them (an older gsctl, a umask or a
