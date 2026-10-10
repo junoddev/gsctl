@@ -268,3 +268,11 @@ settings:
 An opt-in, read-only smoke test runs against the installed schemas:
 
     cargo test --test smoke_real -- --ignored
+
+## License
+
+Copyright 2026 Aaron Junod. Licensed under either of the
+[Apache License, Version 2.0](LICENSE-APACHE) or the
+[MIT license](LICENSE-MIT), at your option. Unless you state otherwise, any
+contribution you submit for inclusion in gsctl is dual licensed the same
+way, without any additional terms or conditions.
