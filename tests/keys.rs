@@ -340,3 +340,24 @@ fn text_output_names_bindings_for_people() {
     assert!(r.stdout.contains("demo@gsctl.test take-window"), "{}", r.stdout);
     assert!(r.stdout.contains("(extension off)"), "{}", r.stdout);
 }
+
+#[test]
+fn add_rolls_back_when_a_write_fails() {
+    if !cfg!(debug_assertions) {
+        return; // the fault hook only exists in debug builds
+    }
+    let env = TestEnv::new();
+    let script = format!(
+        r#"GSCTL_TEST_FAIL_WRITE='{MEDIA_KEYS} custom-keybindings' "$GSCTL" keys add Terminal '<Super>Return' ptyxis > "$TMP/fail.out" 2> "$TMP/fail.err"; echo $? > "$TMP/fail.status""#
+    );
+    env.session_script(&script);
+    let status: i32 = std::fs::read_to_string(env.path("fail.status")).unwrap().trim().parse().unwrap();
+    let err: Value = serde_json::from_str(&std::fs::read_to_string(env.path("fail.err")).unwrap()).unwrap();
+    assert_eq!(status, 1, "{err}");
+    assert!(err["error"]["batch"].as_str().unwrap().starts_with("keys-add-"), "{err}");
+    assert_eq!(err["error"]["rolled_back"].as_array().unwrap().len(), 3, "{err}");
+    for key in ["name", "command", "binding"] {
+        assert_eq!(env.gsctl(&["get", CUSTOM, key, "--path", CUSTOM0]).ok()["is_default"], true, "{key}");
+    }
+    assert_eq!(env.gsctl(&["get", MEDIA_KEYS, "custom-keybindings"]).ok()["is_default"], true);
+}

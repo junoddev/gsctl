@@ -7,7 +7,7 @@ use gio::prelude::*;
 use glib::Variant;
 use serde_json::{Value, json};
 
-use crate::commands::{Action, Tags, WriteOpts, write};
+use crate::commands::{Action, BatchItem, Tags, WriteOpts, write, write_batch};
 use crate::error::{Error, Result};
 use crate::ext;
 use crate::index::{Entry, Index, Origin};
@@ -740,17 +740,23 @@ fn run_plan(plan: &[Planned], op: &str, dry_run: bool, yes: bool, batch: &str) -
     if dry_run {
         return Ok((preview, requires_yes));
     }
-    let mut writes: Vec<Option<Value>> = vec![None; plan.len()];
     if !yes && let Some(i) = preview.iter().position(|w| w["requires_yes"] == true) {
         // Refused (`guarded`) by the write layer, with its reason.
-        writes[i] = Some(one(&plan[i], false, false)?);
+        one(&plan[i], false, false)?;
     }
-    for (i, p) in plan.iter().enumerate() {
-        if writes[i].is_none() {
-            writes[i] = Some(one(p, false, yes)?);
-        }
-    }
-    Ok((writes.into_iter().flatten().collect(), requires_yes))
+    // One batch: a write failing partway rolls back the ones before it.
+    let items = plan
+        .iter()
+        .map(|p| BatchItem {
+            entry: p.entry,
+            key: p.key.clone(),
+            path: p.path.clone(),
+            action: p.value.clone().map_or(Action::Reset, Action::Set),
+            yes,
+            reverts: None,
+        })
+        .collect();
+    Ok((write_batch(items, op, Some(batch), false)?, requires_yes))
 }
 
 pub struct AddOpts<'a> {
