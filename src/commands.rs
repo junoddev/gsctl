@@ -399,7 +399,7 @@ fn prepare_revert<'a>(index: &'a Index, e: &Value, force: bool) -> Result<Prepar
     let k = entry.key(key)?;
     let ty = k.value_type();
     let parse = |text: &str| {
-        glib::Variant::parse(Some(&ty), text).map_err(|err| {
+        convert::parse_finite(&ty, text).map_err(|err| {
             Error::Internal(format!("journal entry {id}: cannot parse {text:?} as {}: {err}", ty.as_str()))
         })
     };

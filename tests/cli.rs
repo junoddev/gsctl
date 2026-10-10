@@ -224,6 +224,32 @@ fn set_rejects_bad_values_with_actionable_errors() {
 }
 
 #[test]
+fn set_rejects_nan_and_infinity() {
+    let env = TestEnv::new();
+    let profile = "/org/gnome/Ptyxis/Profiles/p1/";
+    let cases: &[&[&str]] = &[
+        &["set", S, "ratio-d", "nan"],
+        &["set", S, "ratio-d", "-nan"],
+        &["set", S, "ratio-d", "inf"],
+        &["set", S, "triple-sdb", "('q', nan, false)"],
+        &["set", S, "triple-sdb", "('q', -inf, false)"],
+        &["set", S, "dict-asv", "{'a': <nan>}"],
+        &["set", S, "dict-asv", "{'a': <[<inf>]>}"],
+        &["set", "org.gnome.Ptyxis.Profile", "opacity", "inf", "--path", profile],
+        &["set", "org.gnome.Ptyxis.Profile", "opacity", "1e999", "--path", profile],
+        &["set", "org.gnome.Ptyxis.Profile", "opacity", "nan", "--path", profile, "--dry-run"],
+    ];
+    for args in cases {
+        let r = env.gsctl(args);
+        assert_eq!(r.status, 4, "{args:?}: {}{}", r.stdout, r.stderr);
+        assert_eq!(r.error()["error"]["code"], "invalid_value", "{args:?}");
+    }
+    assert!(journal(&env).is_empty());
+    // Finite values still work.
+    env.gsctl(&["set", "org.gnome.Ptyxis.Profile", "opacity", "0.5", "--path", profile]).ok();
+}
+
+#[test]
 fn dry_run_validates_without_writing() {
     let env = TestEnv::new();
     let out = env.gsctl(&["set", S, "count-i", "50", "--dry-run"]).ok();

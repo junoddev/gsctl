@@ -205,7 +205,7 @@ fn decode(j: &Value, ty: &glib::VariantTy) -> std::result::Result<Variant, Strin
         && let Some(text) = map.get(GVARIANT)
     {
         let text = text.as_str().ok_or("$gvariant must be a string")?;
-        return Variant::parse(Some(ty), text).map_err(|e| format!("invalid GVariant text {text:?}: {e}"));
+        return crate::convert::parse_finite(ty, text).map_err(|e| format!("invalid GVariant text {text:?}: {e}"));
     }
     from_json(j, ty)
 }

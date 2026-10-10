@@ -168,6 +168,24 @@ fn apply_validates_everything_before_writing() {
 }
 
 #[test]
+fn apply_rejects_nan_and_infinity() {
+    let env = TestEnv::new();
+    let profile = "org.gnome.Ptyxis.Profile:/org/gnome/Ptyxis/Profiles/p1/";
+    for (instance, key, value) in [
+        (S, "ratio-d", json!({"$gvariant": "nan"})),
+        (S, "triple-sdb", json!({"$gvariant": "('q', inf, true)"})),
+        (S, "dict-asv", json!({"$gvariant": "{'a': <-inf>}"})),
+        (profile, "opacity", json!({"$gvariant": "inf"})),
+    ] {
+        let file = write_json(&env, "nan.json", &json!({"gsctl": 1, "settings": { instance: { key: value } }}));
+        let r = env.gsctl(&["apply", &file]);
+        assert_eq!(r.status, 4, "{key}: {}{}", r.stdout, r.stderr);
+        assert_eq!(r.error()["error"]["problems"][0]["code"], "invalid_value", "{key}");
+    }
+    assert_eq!(journal_len(&env), 0);
+}
+
+#[test]
 fn apply_rejects_files_that_are_not_state_files() {
     let env = TestEnv::new();
     let file = write_json(&env, "x.json", &json!({"hello": 1}));

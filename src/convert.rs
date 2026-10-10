@@ -71,7 +71,13 @@ pub fn from_json(j: &Value, ty: &VariantTy) -> Result<Variant, String> {
         "u" => (int(0, u32::MAX.into())? as u32).into(),
         "x" => (int(i64::MIN.into(), i64::MAX.into())? as i64).into(),
         "t" => (int(0, u64::MAX.into())? as u64).into(),
-        "d" => j.as_f64().ok_or_else(mismatch)?.into(),
+        "d" => {
+            let d = j.as_f64().ok_or_else(mismatch)?;
+            if !d.is_finite() {
+                return Err(format!("{d} is not allowed: numbers must be finite"));
+            }
+            d.into()
+        }
         "s" => j.as_str().ok_or_else(mismatch)?.into(),
         "o" | "g" => {
             let text = j.as_str().ok_or_else(mismatch)?;
@@ -191,12 +197,45 @@ fn infer(j: &Value) -> Result<Variant, String> {
     })
 }
 
+/// `Err` if `v` holds a NaN or infinite double anywhere, including inside
+/// containers and variants. GSettings would store them, but they pass range
+/// checks (NaN compares false) and break JSON output.
+pub fn check_finite(v: &Variant) -> Result<(), String> {
+    match v.classify() {
+        VariantClass::Double => {
+            let d = v.get::<f64>().unwrap();
+            if d.is_finite() { Ok(()) } else { Err(format!("{d} is not allowed: numbers must be finite")) }
+        }
+        VariantClass::Variant => check_finite(&v.as_variant().unwrap()),
+        VariantClass::Maybe => v.as_maybe().map_or(Ok(()), |c| check_finite(&c)),
+        VariantClass::Array | VariantClass::Tuple | VariantClass::DictEntry => {
+            let sig = v.type_().as_str();
+            if sig.contains('d') || sig.contains('v') { v.iter().try_for_each(|c| check_finite(&c)) } else { Ok(()) }
+        }
+        _ => Ok(()),
+    }
+}
+
+/// [`Variant::parse`] that also rejects NaN and infinity.
+pub fn parse_finite(ty: &VariantTy, text: &str) -> Result<Variant, String> {
+    let v = Variant::parse(Some(ty), text).map_err(|e| e.to_string())?;
+    check_finite(&v)?;
+    Ok(v)
+}
+
 /// Parse a command-line value for a key of type `ty`.
 ///
 /// Tried in order: JSON (`true`, `42`, `"text"`, `["a","b"]`), GVariant text
 /// syntax (`@as []`, `('xkb', 'us')`, `uint32 5`), and, for string types, the
-/// raw text itself, so `prefer-dark` works without quotes.
+/// raw text itself, so `prefer-dark` works without quotes. NaN and infinity
+/// are rejected.
 pub fn parse_input(raw: &str, ty: &VariantTy) -> Result<Variant, String> {
+    let v = parse_any(raw, ty)?;
+    check_finite(&v)?;
+    Ok(v)
+}
+
+fn parse_any(raw: &str, ty: &VariantTy) -> Result<Variant, String> {
     let json_err = match serde_json::from_str::<Value>(raw) {
         Ok(j) => match from_json(&j, ty) {
             Ok(v) => return Ok(v),
@@ -404,6 +443,28 @@ mod tests {
         assert_eq!(p("label", "ms").unwrap(), "@ms 'label'");
         assert!(p("maybe", "b").is_err());
         assert_eq!(p(r#"["a",1]"#, "as").unwrap_err(), "item 1: expected string, got integer");
+    }
+
+    #[test]
+    fn rejects_non_finite_numbers() {
+        let p = |raw: &str, sig: &str| parse_input(raw, &ty(sig));
+        for (raw, sig) in [
+            ("nan", "d"),
+            ("inf", "d"),
+            ("-inf", "d"),
+            ("[1.0, nan]", "ad"),
+            ("('x', inf, true)", "(sdb)"),
+            ("{'a': <nan>}", "a{sv}"),
+            ("just inf", "md"),
+        ] {
+            assert!(p(raw, sig).unwrap_err().contains("finite"), "{raw} as {sig}");
+        }
+        // Out of range for a double: GLib's own parser refuses it.
+        assert!(p("1e999", "d").is_err());
+        assert!(p("1.5", "d").is_ok());
+        assert!(p("{'a': <1.5>, 'b': <'x'>}", "a{sv}").is_ok());
+        assert!(parse_finite(&ty("d"), "nan").is_err());
+        assert!(parse_finite(&ty("d"), "2.5").is_ok());
     }
 
     #[test]
