@@ -2,6 +2,7 @@
 //! extension's own `schemas/` directory.
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use gio::prelude::*;
 use gio::{SettingsSchema, SettingsSchemaKey, SettingsSchemaSource};
@@ -27,6 +28,9 @@ impl Origin {
 pub struct Entry {
     pub schema: SettingsSchema,
     pub origin: Origin,
+    /// `(path, schema id)` of every fixed schema in the index, shared, so an
+    /// instance path can be checked without the index.
+    fixed_paths: Rc<[(String, String)]>,
 }
 
 impl Entry {
@@ -64,9 +68,7 @@ impl Entry {
                 )));
             }
             (true, Some(p)) => {
-                if !valid_path(p) {
-                    return Err(Error::Usage(format!("invalid path {p:?}: must start and end with '/'")));
-                }
+                self.check_instance_path(p)?;
                 Some(p)
             }
             (false, Some(_)) => {
@@ -78,6 +80,30 @@ impl Entry {
             (false, None) => None,
         };
         Ok(gio::Settings::new_full(&self.schema, None::<&gio::SettingsBackend>, path))
+    }
+
+    /// Whether `p` may hold an instance of this relocatable schema. It must
+    /// be a valid path; not the path of any installed fixed schema (writing
+    /// another schema's keys there would bypass that schema's guards and
+    /// types); and, for the listed relocatable schemas (custom keybindings,
+    /// Ptyxis profiles), below their usual prefix.
+    pub fn check_instance_path(&self, p: &str) -> Result<()> {
+        if !valid_path(p) {
+            return Err(Error::Usage(format!("invalid path {p:?}: must start and end with '/'")));
+        }
+        if let Some((_, owner)) = self.fixed_paths.iter().find(|(fixed, _)| fixed == p) {
+            return Err(Error::Usage(format!(
+                "{p} is the path of the fixed schema {owner}; use {owner} itself rather than {} --path",
+                self.id()
+            )));
+        }
+        let id = self.id();
+        if let Some(l) = LISTED.iter().find(|l| l.schema == id)
+            && !(p.starts_with(l.prefix) && p.len() > l.prefix.len())
+        {
+            return Err(Error::Usage(format!("{id} instances live below {}, not at {p}", l.prefix)));
+        }
+        Ok(())
     }
 
     pub fn summary_json(&self) -> Value {
@@ -97,6 +123,8 @@ struct Listed {
     list_key: &'static str,
     schema: &'static str,
     path: &'static str,
+    /// Where instances live; `--path` for `schema` must be below it.
+    prefix: &'static str,
 }
 
 const LISTED: &[Listed] = &[
@@ -105,14 +133,19 @@ const LISTED: &[Listed] = &[
         list_key: "custom-keybindings",
         schema: "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding",
         path: "{}",
+        prefix: "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/",
     },
     Listed {
         list_schema: "org.gnome.Ptyxis",
         list_key: "profile-uuids",
         schema: "org.gnome.Ptyxis.Profile",
         path: "/org/gnome/Ptyxis/Profiles/{}/",
+        prefix: "/org/gnome/Ptyxis/Profiles/",
     },
 ];
+
+/// The only schema ids an extension's own `schemas/` dir may add.
+const EXTENSION_NAMESPACE: &str = "org.gnome.shell.extensions.";
 
 fn valid_path(p: &str) -> bool {
     p.starts_with('/') && p.ends_with('/') && !p.contains("//")
@@ -127,28 +160,16 @@ impl Index {
     pub fn load() -> Result<Index> {
         let default = SettingsSchemaSource::default();
         let mut entries: Vec<Entry> = Vec::new();
+        let no_paths: Rc<[(String, String)]> = Rc::from(Vec::new());
         let push = |entries: &mut Vec<Entry>, schema: SettingsSchema, origin: Origin| {
             if !entries.iter().any(|e| e.schema.id() == schema.id()) {
-                entries.push(Entry { schema, origin });
+                entries.push(Entry { schema, origin, fixed_paths: no_paths.clone() });
             }
         };
 
-        // Extensions first: like GNOME Shell, an extension's bundled schema wins
-        // over a copy installed system-wide, and it tells us which extension
-        // owns the keys.
-        for (uuid, dir) in extension_schema_dirs() {
-            let source = match SettingsSchemaSource::from_directory(&dir, default.as_ref(), false) {
-                Ok(s) => s,
-                Err(_) => continue, // missing or stale gschemas.compiled
-            };
-            let (fixed, relocatable) = source.list_schemas(false);
-            for id in fixed.iter().chain(relocatable.iter()) {
-                if let Some(schema) = source.lookup(id, false) {
-                    push(&mut entries, schema, Origin::Extension { uuid: uuid.clone(), dir: dir.clone() });
-                }
-            }
-        }
-
+        // The system source first: it wins for every id it has, so an
+        // extension (even a disabled one) can't redefine a system schema's
+        // types, ranges, path or descriptions.
         if let Some(source) = &default {
             let (fixed, relocatable) = source.list_schemas(true);
             for id in fixed.iter().chain(relocatable.iter()) {
@@ -158,7 +179,33 @@ impl Index {
             }
         }
 
+        // Extensions may only add schemas in their own namespace, at a path
+        // no system schema uses.
+        for (uuid, dir) in extension_schema_dirs() {
+            let source = match SettingsSchemaSource::from_directory(&dir, default.as_ref(), false) {
+                Ok(s) => s,
+                Err(_) => continue, // missing or stale gschemas.compiled
+            };
+            let (fixed, relocatable) = source.list_schemas(false);
+            for id in fixed.iter().chain(relocatable.iter()) {
+                if !id.starts_with(EXTENSION_NAMESPACE) {
+                    continue;
+                }
+                let Some(schema) = source.lookup(id, false) else { continue };
+                let path = schema.path();
+                if path.is_some() && entries.iter().any(|e| e.schema.path() == path) {
+                    continue;
+                }
+                push(&mut entries, schema, Origin::Extension { uuid: uuid.clone(), dir: dir.clone() });
+            }
+        }
+
         entries.sort_by_key(|e| e.id());
+        let fixed: Rc<[(String, String)]> =
+            entries.iter().filter_map(|e| Some((e.schema.path()?.to_string(), e.id()))).collect();
+        for e in &mut entries {
+            e.fixed_paths = fixed.clone();
+        }
         Ok(Index { entries })
     }
 
@@ -183,7 +230,7 @@ impl Index {
             let Ok(settings) = list.settings(None) else { continue };
             for item in settings.strv(l.list_key) {
                 let path = l.path.replace("{}", &item);
-                if valid_path(&path) {
+                if entry.check_instance_path(&path).is_ok() {
                     out.push((entry, path));
                 }
             }
@@ -194,6 +241,8 @@ impl Index {
 
 /// `(uuid, schemas dir)` for every installed extension that ships schemas,
 /// user extensions (`$XDG_DATA_HOME`) before system ones (`$XDG_DATA_DIRS`).
+/// Directories whose `metadata.json` uuid isn't the directory name are
+/// skipped, as GNOME Shell skips them.
 fn extension_schema_dirs() -> Vec<(String, PathBuf)> {
     let mut bases = vec![glib::user_data_dir()];
     bases.extend(glib::system_data_dirs());
@@ -203,7 +252,7 @@ fn extension_schema_dirs() -> Vec<(String, PathBuf)> {
         let mut found: Vec<(String, PathBuf)> = dir
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| has_compiled_schemas(p))
+            .filter(|p| has_compiled_schemas(p) && crate::ext::metadata_matching_dir(p).is_some())
             .filter_map(|p| Some((p.file_name()?.to_str()?.to_string(), p.join("schemas"))))
             .collect();
         found.sort();

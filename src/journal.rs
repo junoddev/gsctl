@@ -2,8 +2,9 @@
 //! `$XDG_STATE_HOME/gsctl/journal.ndjson` (default `~/.local/state/...`).
 //! `history` and `revert` read it.
 
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::Write;
+use std::os::unix::fs::DirBuilderExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -65,6 +66,16 @@ pub fn record(change: &Change) -> std::io::Result<String> {
         "old_user_value": change.old_user_value.map(|v| v.print(true).to_string()),
         "new_gvariant": change.new.print(true).as_str(),
     });
+    if crate::guard::is_secret(change.key, change.new.type_().as_str()) {
+        const REDACTED: &str = "<redacted>";
+        for field in ["old", "new", "old_gvariant", "new_gvariant"] {
+            entry[field] = REDACTED.into();
+        }
+        if change.old_user_value.is_some() {
+            entry["old_user_value"] = REDACTED.into();
+        }
+        entry["redacted"] = true.into();
+    }
     if let Some(r) = change.reverts {
         entry["reverts"] = r.into();
     }
@@ -111,9 +122,10 @@ fn ends_mid_line(path: &std::path::Path) -> bool {
 fn append(entry: &Value) -> std::io::Result<()> {
     let path = path();
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
+        fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
     }
-    let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
+    // Private (0600), and never through a symlink planted at the path.
+    let mut f = crate::fsutil::open_append_private(&path)?;
     // After a torn write, start a new line so this entry isn't lost with it.
     let start = if ends_mid_line(&path) { "\n" } else { "" };
     // One write per line keeps concurrent appends from interleaving.

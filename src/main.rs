@@ -202,11 +202,15 @@ enum ExtCommand {
     List,
     /// One extension's metadata and settings (keys with current values).
     Info { uuid: String },
-    /// Enable an installed extension (adds just its uuid; no --yes needed).
+    /// Enable an installed extension (adds just its uuid). Its code runs
+    /// inside GNOME Shell, so this needs --yes.
     Enable {
         uuid: String,
         #[arg(long)]
         dry_run: bool,
+        /// Confirm running the extension's code.
+        #[arg(long)]
+        yes: bool,
     },
     /// Disable an extension (removes just its uuid; no --yes needed).
     Disable {
@@ -231,7 +235,8 @@ enum KeysCommand {
     Conflicts,
     /// Add a custom keybinding that runs COMMAND. ACCEL is GTK syntax
     /// ('<Super>t', '<Control><Alt>Delete'). Refuses an accelerator that's
-    /// already bound, or a NAME already used, unless --force.
+    /// already bound, or a NAME already used, unless --force. Needs --yes,
+    /// since it sets up a command to run.
     Add {
         name: String,
         accel: String,
@@ -242,7 +247,7 @@ enum KeysCommand {
         /// Show the writes without making them.
         #[arg(long)]
         dry_run: bool,
-        /// Confirm writes to guarded keys.
+        /// Confirm adding a binding that runs COMMAND.
         #[arg(long)]
         yes: bool,
     },
@@ -253,9 +258,6 @@ enum KeysCommand {
         /// Show the writes without making them.
         #[arg(long)]
         dry_run: bool,
-        /// Confirm writes to guarded keys.
-        #[arg(long)]
-        yes: bool,
     },
 }
 
@@ -294,8 +296,8 @@ fn run(cli: &Cli) -> Result<Option<Value>> {
         Command::Ext(e) => match e {
             ExtCommand::List => ext::list(&index),
             ExtCommand::Info { uuid } => ext::info(&index, uuid),
-            ExtCommand::Enable { uuid, dry_run } => ext::set_enabled(&index, uuid, true, *dry_run),
-            ExtCommand::Disable { uuid, dry_run } => ext::set_enabled(&index, uuid, false, *dry_run),
+            ExtCommand::Enable { uuid, dry_run, yes } => ext::set_enabled(&index, uuid, true, *dry_run, *yes),
+            ExtCommand::Disable { uuid, dry_run } => ext::set_enabled(&index, uuid, false, *dry_run, false),
         },
         Command::Keys(k) => match k {
             KeysCommand::Find { accel } => keys::find(&index, accel),
@@ -305,7 +307,7 @@ fn run(cli: &Cli) -> Result<Option<Value>> {
                 let opts = AddOpts { name, accel, command, force: *force, dry_run: *dry_run, yes: *yes };
                 keys::add(&index, &opts)
             }
-            KeysCommand::Remove { binding, dry_run, yes } => keys::remove(&index, binding, *dry_run, *yes),
+            KeysCommand::Remove { binding, dry_run } => keys::remove(&index, binding, *dry_run),
         },
         Command::History { limit, schema, key } => commands::history(*limit, schema, key.as_deref()),
         Command::Revert { id, force, dry_run, yes } => commands::revert(&index, id, *force, *dry_run, *yes),

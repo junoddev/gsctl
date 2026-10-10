@@ -16,11 +16,11 @@ fn customise(env: &TestEnv) {
     env.gsctl(&["set", S, "count-i", "42"]).ok();
     env.gsctl(&["set", S, "dict-asv", "{'n': <uint32 7>, 's': <'x'>}"]).ok();
     env.gsctl(&["set", S, "launch-count", "12"]).ok();
-    env.gsctl(&["set", "org.gnome.desktop.screensaver", "lock-delay", "30"]).ok();
+    env.gsctl(&["set", "org.gnome.desktop.screensaver", "logout-delay", "30"]).ok();
     env.gsctl(&["set", "org.gnome.shell.extensions.gsctl-demo", "show-indicator", "false"]).ok();
-    env.gsctl(&["set", MEDIA_KEYS, "custom-keybindings", &format!(r#"["{CUSTOM0}"]"#)]).ok();
+    env.gsctl(&["set", MEDIA_KEYS, "custom-keybindings", &format!(r#"["{CUSTOM0}"]"#), "--yes"]).ok();
     for (k, v) in [("name", "Terminal"), ("command", "ptyxis"), ("binding", "<Super>Return")] {
-        env.gsctl(&["set", CUSTOM, k, v, "--path", CUSTOM0]).ok();
+        env.gsctl(&["set", CUSTOM, k, v, "--path", CUSTOM0, "--yes"]).ok();
     }
 }
 
@@ -52,7 +52,7 @@ fn export_groups_by_area_and_skips_state() {
     assert_eq!(s[S]["count-i"], 42);
     // JSON would turn the uint32 into an int32, so it's kept as GVariant text.
     assert_eq!(s[S]["dict-asv"], json!({"$gvariant": "{'n': <uint32 7>, 's': <'x'>}"}));
-    assert_eq!(s["org.gnome.desktop.screensaver"]["lock-delay"], 30);
+    assert_eq!(s["org.gnome.desktop.screensaver"]["logout-delay"], 30);
     assert_eq!(s["org.gnome.shell.extensions.gsctl-demo"]["show-indicator"], false);
     assert_eq!(s[MEDIA_KEYS]["custom-keybindings"], json!([CUSTOM0]));
     assert_eq!(
@@ -66,7 +66,7 @@ fn export_groups_by_area_and_skips_state() {
     assert_eq!(all["settings"][S]["launch-count"], 12);
 
     let power = env.gsctl(&["export", "--area", "power"]).ok();
-    assert_eq!(power["settings"], json!({"org.gnome.desktop.screensaver": {"lock-delay": 30}}));
+    assert_eq!(power["settings"], json!({"org.gnome.desktop.screensaver": {"logout-delay": 30}}));
     assert_eq!(env.gsctl(&["export", "--area", "nope"]).status, 2);
 }
 
@@ -96,7 +96,7 @@ fn export_then_apply_reproduces_the_settings() {
     assert_eq!(dry["changes"].as_array().unwrap().len(), 8);
     assert_eq!(journal_len(&target), 0);
 
-    let out = target.gsctl(&["apply", &file]).ok();
+    let out = target.gsctl(&["apply", &file, "--yes"]).ok();
     assert_eq!(out["changes"].as_array().unwrap().len(), 8);
     assert!(out["batch"].as_str().unwrap().starts_with("apply-"));
 
@@ -197,7 +197,7 @@ fn apply_rejects_files_that_are_not_state_files() {
 fn apply_needs_yes_for_guarded_keys() {
     let env = TestEnv::new();
     let doc = json!({"gsctl": 1, "settings": {
-        "org.gnome.desktop.screensaver": { "lock-enabled": false, "lock-delay": 5 }
+        "org.gnome.desktop.screensaver": { "lock-enabled": false, "logout-delay": 5 }
     }});
     let file = write_json(&env, "guarded.json", &doc);
     let dry = env.gsctl(&["apply", &file, "--dry-run"]).ok();
@@ -205,7 +205,7 @@ fn apply_needs_yes_for_guarded_keys() {
 
     let r = env.gsctl(&["apply", &file]);
     assert_eq!(r.status, 6);
-    assert_eq!(env.gsctl(&["get", "org.gnome.desktop.screensaver", "lock-delay"]).ok()["value"], 0);
+    assert_eq!(env.gsctl(&["get", "org.gnome.desktop.screensaver", "logout-delay"]).ok()["value"], 0);
 
     env.gsctl(&["apply", &file, "--yes"]).ok();
     assert_eq!(env.gsctl(&["get", "org.gnome.desktop.screensaver", "lock-enabled"]).ok()["value"], false);
@@ -216,7 +216,7 @@ fn apply_area_filter() {
     let env = TestEnv::new();
     let doc = json!({"gsctl": 1, "settings": {
         S: { "count-i": 50 },
-        "org.gnome.desktop.screensaver": { "lock-delay": 5 }
+        "org.gnome.desktop.screensaver": { "logout-delay": 5 }
     }});
     let file = write_json(&env, "mixed.json", &doc);
     let out = env.gsctl(&["apply", &file, "--area", "power"]).ok();
@@ -281,7 +281,7 @@ fn revert_undoes_a_whole_apply() {
     env.gsctl(&["set", S, "name-s", "Mine"]).ok();
     let doc = json!({"gsctl": 1, "settings": {
         S: { "count-i": 50, "name-s": "Theirs" },
-        "org.gnome.desktop.screensaver": { "lock-delay": 5 }
+        "org.gnome.desktop.screensaver": { "logout-delay": 5 }
     }});
     let file = write_json(&env, "a.json", &doc);
     let applied = env.gsctl(&["apply", &file]).ok();
@@ -300,7 +300,7 @@ fn revert_undoes_a_whole_apply() {
     assert_eq!(out["results"].as_array().unwrap().len(), 3);
     assert_eq!(env.gsctl(&["get", S, "name-s"]).ok()["value"], "Mine");
     assert_eq!(env.gsctl(&["get", S, "count-i"]).ok()["is_default"], true);
-    assert_eq!(env.gsctl(&["get", "org.gnome.desktop.screensaver", "lock-delay"]).ok()["is_default"], true);
+    assert_eq!(env.gsctl(&["get", "org.gnome.desktop.screensaver", "logout-delay"]).ok()["is_default"], true);
 }
 
 #[test]
@@ -431,7 +431,7 @@ fn batch_revert_rolls_back_when_a_write_fails() {
 #[test]
 fn apply_prune_resets_unlisted_keys_in_the_files_areas() {
     let env = TestEnv::new();
-    customise(&env); // count-i, dict-asv, launch-count (state), lock-delay (power), a custom keybinding
+    customise(&env); // count-i, dict-asv, launch-count (state), logout-delay (power), a custom keybinding
     env.gsctl(&["set", S, "name-s", "Mine"]).ok();
     let doc = json!({"gsctl": 1, "area": "other", "settings": { S: { "count-i": 42 } }});
     let file = write_json(&env, "other.json", &doc);
@@ -448,7 +448,7 @@ fn apply_prune_resets_unlisted_keys_in_the_files_areas() {
     assert_eq!(env.gsctl(&["get", S, "name-s"]).ok()["is_default"], true);
     assert_eq!(env.gsctl(&["get", S, "count-i"]).ok()["value"], 42);
     assert_eq!(env.gsctl(&["get", S, "launch-count"]).ok()["value"], 12, "app state is never pruned");
-    assert_eq!(env.gsctl(&["get", "org.gnome.desktop.screensaver", "lock-delay"]).ok()["value"], 30, "other area");
+    assert_eq!(env.gsctl(&["get", "org.gnome.desktop.screensaver", "logout-delay"]).ok()["value"], 30, "other area");
 
     env.gsctl(&["revert", "last"]).ok();
     assert_eq!(env.gsctl(&["get", S, "name-s"]).ok()["value"], "Mine");
@@ -463,7 +463,9 @@ fn apply_prune_covers_listed_instances_guards_and_needs_an_area() {
     customise(&env);
     let doc = json!({"gsctl": 1, "area": "keybindings", "settings": {}});
     let file = write_json(&env, "kb.json", &doc);
-    let out = env.gsctl(&["apply", &file, "--prune"]).ok();
+    // Pruning resets the custom-keybindings list and `command`, which are guarded.
+    assert_eq!(env.gsctl(&["apply", &file, "--prune"]).status, 6);
+    let out = env.gsctl(&["apply", &file, "--prune", "--yes"]).ok();
     assert_eq!(out["pruned"].as_array().unwrap().len(), 4, "{out}");
     assert_eq!(env.gsctl(&["get", MEDIA_KEYS, "custom-keybindings"]).ok()["is_default"], true);
     assert_eq!(env.gsctl(&["get", CUSTOM, "name", "--path", CUSTOM0]).ok()["is_default"], true);

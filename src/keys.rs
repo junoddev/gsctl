@@ -765,6 +765,7 @@ pub struct AddOpts<'a> {
     pub command: &'a str,
     pub force: bool,
     pub dry_run: bool,
+    /// Confirm the guarded writes (`command` and the custom-keybindings list run code).
     pub yes: bool,
 }
 
@@ -859,7 +860,7 @@ pub fn add(index: &Index, opts: &AddOpts) -> Result<Value> {
 /// Remove a custom keybinding, found by exact name, path, or `customN`:
 /// drop it from the list, then reset its keys, as one batch (so `revert
 /// last` brings it back).
-pub fn remove(index: &Index, which: &str, dry_run: bool, yes: bool) -> Result<Value> {
+pub fn remove(index: &Index, which: &str, dry_run: bool) -> Result<Value> {
     let media = index.get(MEDIA_KEYS)?;
     let custom = index.get(CUSTOM_KEYBINDING_SCHEMA)?;
     let existing = custom_paths(index);
@@ -902,7 +903,8 @@ pub fn remove(index: &Index, which: &str, dry_run: bool, yes: bool) -> Result<Va
         }
     }
     let batch = journal::new_id(Some("keys-remove"));
-    let (writes, requires_yes) = run_plan(&plan, "keys-remove", dry_run, yes, &batch)?;
+    // Removing runs nothing, so it skips the guards on the list and `command`.
+    let (writes, requires_yes) = run_plan(&plan, "keys-remove", dry_run, true, &batch)?;
 
     Ok(json!({
         "dry_run": dry_run,

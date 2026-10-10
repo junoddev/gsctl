@@ -31,7 +31,7 @@ pub(crate) fn range_json(key: &SettingsSchemaKey) -> Value {
 
 /// Full description of one key. `settings` is `None` for a relocatable schema
 /// without a path, which has no current value.
-fn key_json(entry: &Entry, key: &SettingsSchemaKey, settings: Option<&gio::Settings>) -> Value {
+fn key_json(entry: &Entry, key: &SettingsSchemaKey, settings: Option<&gio::Settings>, path: Option<&str>) -> Value {
     let name = key.name();
     let ty = key.value_type();
     let mut out = json!({
@@ -43,8 +43,12 @@ fn key_json(entry: &Entry, key: &SettingsSchemaKey, settings: Option<&gio::Setti
         "description": key.description().map(|s| s.to_string()),
         "range": range_json(key),
         "default": to_json(&key.default_value()),
-        "guarded": guard::check(&entry.id(), &name),
     });
+    let guard = guard::check_entry(entry, path, &name);
+    out["guarded"] = guard.map(|g| g.reason).into();
+    out["executes"] = guard.is_some_and(|g| g.executes).into();
+    // Says whether the summary and description come from an extension.
+    out["origin"] = entry.origin.to_json();
     if let Some(s) = settings {
         let o = out.as_object_mut().unwrap();
         o.insert("value".into(), to_json(&s.value(&name)));
@@ -70,10 +74,10 @@ pub fn schema(index: &Index, schema: Option<&str>, key: Option<&str>, path: Opti
     };
     if let Some(k) = key {
         let key = entry.key(k)?;
-        return Ok(key_json(entry, &key, settings.as_ref()));
+        return Ok(key_json(entry, &key, settings.as_ref(), path));
     }
     let keys: Vec<Value> =
-        entry.keys().iter().map(|k| key_json(entry, &entry.schema.key(k), settings.as_ref())).collect();
+        entry.keys().iter().map(|k| key_json(entry, &entry.schema.key(k), settings.as_ref(), path)).collect();
     let mut out = entry.summary_json();
     let o = out.as_object_mut().unwrap();
     o.insert("instance_path".into(), path.into());
@@ -237,7 +241,7 @@ pub(crate) fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action
     if !settings.is_writable(key) {
         return Err(Error::NotWritable { schema, key: key.to_string() });
     }
-    let guarded = guard::check(&schema, key);
+    let guarded = guard::check_entry(entry, opts.path, key);
     let mut out = json!({
         "schema": schema,
         "path": opts.path,
@@ -250,13 +254,17 @@ pub(crate) fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action
     });
     if opts.dry_run {
         out["requires_yes"] = guarded.is_some().into();
+        if let Some(g) = guarded {
+            out["guarded"] = g.reason.into();
+            out["executes"] = g.executes.into();
+        }
         return Ok(out);
     }
     doctor::require_writable()?;
-    if let Some(reason) = guarded
+    if let Some(g) = guarded
         && !opts.yes
     {
-        return Err(Error::Guarded { schema, key: key.to_string(), reason: reason.to_string() });
+        return Err(Error::Guarded { schema, key: key.to_string(), reason: g.reason.to_string() });
     }
     // Test hook (debug builds only): make the write of "<schema> <key>" fail,
     // to exercise batch rollback.
@@ -473,7 +481,9 @@ pub fn revert(index: &Index, id: &str, force: bool, dry_run: bool, yes: bool) ->
         doctor::require_writable()?;
         if !yes {
             for p in prepared.iter().filter(|p| !p.targeted) {
-                if let Some(reason) = guard::check(&p.item.entry.id(), &p.item.key) {
+                if let Some(reason) =
+                    guard::check_entry(p.item.entry, p.item.path.as_deref(), &p.item.key).map(|g| g.reason)
+                {
                     let (schema, key) = (p.item.entry.id(), p.item.key.clone());
                     return Err(Error::Guarded { schema, key, reason: reason.to_string() });
                 }
@@ -495,10 +505,10 @@ pub fn revert(index: &Index, id: &str, force: bool, dry_run: bool, yes: bool) ->
 
 struct PreparedRevert<'a> {
     item: BatchItem<'a>,
-    /// Undoes a targeted edit: one uuid added to or removed from
-    /// `enabled-extensions`/`disabled-extensions`, as `ext enable`/`disable`
-    /// make without `--yes`, so the revert doesn't need it either. Judged
-    /// from the values, never from the journal's `op`, which could be forged.
+    /// Turns one extension off: one uuid removed from `enabled-extensions` or
+    /// added to `disabled-extensions`, as `ext disable` does without `--yes`,
+    /// so the revert doesn't need it either. Judged from the values, never
+    /// from the journal's `op`, which could be forged.
     targeted: bool,
 }
 
@@ -523,6 +533,12 @@ fn prepare_revert<'a>(index: &'a Index, e: &Value, force: bool) -> Result<Prepar
     let field =
         |name: &str| e[name].as_str().ok_or_else(|| Error::Internal(format!("journal entry {id} has no {name}")));
     let (schema, key) = (field("schema")?, field("key")?);
+    if e["redacted"] == true {
+        return Err(Error::Usage(format!(
+            "journal entry {id} changed a secret ({schema} {key}); its values aren't stored, so it can't be \
+             reverted. Set the key again instead"
+        )));
+    }
     let path = e["path"].as_str();
     let entry = index.get(schema)?;
     let k = entry.key(key)?;
@@ -569,7 +585,12 @@ fn prepare_revert<'a>(index: &'a Index, e: &Value, force: bool) -> Result<Prepar
             Action::Set(v) => v.clone(),
             Action::Reset => settings.default_value(key).unwrap_or_else(|| k.default_value()),
         };
-        one_item_apart(&current, &after)
+        // Only a revert that turns one extension off: re-enabling runs its
+        // code, so that needs --yes like `ext enable`.
+        let len = |v: &glib::Variant| v.get::<Vec<String>>().map_or(0, |l| l.len());
+        let turns_off =
+            if key == "enabled-extensions" { len(&after) < len(&current) } else { len(&after) > len(&current) };
+        turns_off && one_item_apart(&current, &after)
     };
     let item = BatchItem {
         entry,

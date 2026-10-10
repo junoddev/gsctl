@@ -67,7 +67,7 @@ fn add_creates_a_custom_binding() {
     assert_eq!(dry["path"], CUSTOM0);
     assert_eq!(env.gsctl(&["keys", "list", "--custom"]).ok()["count"], 0);
 
-    let out = env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis"]).ok();
+    let out = env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis", "--yes"]).ok();
     assert_eq!(out["path"], CUSTOM0);
     assert!(out["batch"].as_str().unwrap().starts_with("keys-add-"));
     let list = env.gsctl(&["keys", "list", "--custom"]).ok();
@@ -77,7 +77,7 @@ fn add_creates_a_custom_binding() {
     assert_eq!(env.gsctl(&["get", MEDIA_KEYS, "custom-keybindings"]).ok()["value"], json!([CUSTOM0]));
 
     // The next one goes to custom1, and find sees the custom binding.
-    let second = env.gsctl(&["keys", "add", "Files", "<Super>e", "nautilus"]).ok();
+    let second = env.gsctl(&["keys", "add", "Files", "<Super>e", "nautilus", "--yes"]).ok();
     assert_eq!(second["path"], CUSTOM1);
     let found = env.gsctl(&["keys", "find", "<super>return"]).ok();
     assert_eq!(found["bindings"][0]["custom"]["name"], "Terminal");
@@ -86,22 +86,22 @@ fn add_creates_a_custom_binding() {
 #[test]
 fn add_refuses_taken_accelerators() {
     let env = TestEnv::new();
-    let r = env.gsctl(&["keys", "add", "Lock", "<Super>l", "true"]);
+    let r = env.gsctl(&["keys", "add", "Lock", "<Super>l", "true", "--yes"]);
     assert_eq!(r.status, 7, "{}", r.stderr);
     assert!(r.error()["error"]["message"].as_str().unwrap().contains("screensaver"));
     assert_eq!(env.gsctl(&["keys", "list", "--custom"]).ok()["count"], 0);
 
-    env.gsctl(&["keys", "add", "Lock", "<Super>l", "true", "--force"]).ok();
+    env.gsctl(&["keys", "add", "Lock", "<Super>l", "true", "--force", "--yes"]).ok();
     assert_eq!(env.gsctl(&["keys", "conflicts"]).ok()["count"], 1);
 
-    assert_eq!(env.gsctl(&["keys", "add", "Bad", "<Super>", "x"]).status, 4);
+    assert_eq!(env.gsctl(&["keys", "add", "Bad", "<Super>", "x", "--yes"]).status, 4);
 }
 
 #[test]
 fn remove_deletes_a_custom_binding_and_revert_brings_it_back() {
     let env = TestEnv::new();
-    env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis"]).ok();
-    env.gsctl(&["keys", "add", "Files", "<Super>e", "nautilus"]).ok();
+    env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis", "--yes"]).ok();
+    env.gsctl(&["keys", "add", "Files", "<Super>e", "nautilus", "--yes"]).ok();
 
     let dry = env.gsctl(&["keys", "remove", "Terminal", "--dry-run"]).ok();
     assert_eq!(dry["path"], CUSTOM0);
@@ -116,7 +116,7 @@ fn remove_deletes_a_custom_binding_and_revert_brings_it_back() {
     assert_eq!(env.gsctl(&["get", CUSTOM, "name", "--path", CUSTOM0]).ok()["is_default"], true);
     assert_eq!(env.gsctl(&["keys", "find", "<Super>Return"]).ok()["free"], true);
 
-    env.gsctl(&["revert", "last"]).ok();
+    env.gsctl(&["revert", "last", "--yes"]).ok();
     let list = env.gsctl(&["keys", "list", "--custom"]).ok();
     assert_eq!(list["count"], 2, "{list}");
     assert_eq!(env.gsctl(&["get", MEDIA_KEYS, "custom-keybindings"]).ok()["value"], json!([CUSTOM0, CUSTOM1]));
@@ -137,9 +137,9 @@ fn remove_refuses_unknown_and_ambiguous_names() {
     assert_eq!(r.status, 3, "{}", r.stderr);
     assert_eq!(r.error()["error"]["code"], "binding_not_found");
 
-    env.gsctl(&["keys", "add", "Same", "<Super>F1", "true"]).ok();
+    env.gsctl(&["keys", "add", "Same", "<Super>F1", "true", "--yes"]).ok();
     // A second binding with the same name takes --force.
-    env.gsctl(&["keys", "add", "Same", "<Super>F2", "true", "--force"]).ok();
+    env.gsctl(&["keys", "add", "Same", "<Super>F2", "true", "--force", "--yes"]).ok();
     let r = env.gsctl(&["keys", "remove", "Same"]);
     assert_eq!(r.status, 2, "{}", r.stderr);
     assert!(r.error()["error"]["message"].as_str().unwrap().contains(CUSTOM1));
@@ -149,8 +149,8 @@ fn remove_refuses_unknown_and_ambiguous_names() {
 #[test]
 fn revert_last_undoes_keys_add() {
     let env = TestEnv::new();
-    env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis"]).ok();
-    env.gsctl(&["revert", "last"]).ok();
+    env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis", "--yes"]).ok();
+    env.gsctl(&["revert", "last", "--yes"]).ok();
     assert_eq!(env.gsctl(&["keys", "list", "--custom"]).ok()["count"], 0);
     assert_eq!(env.gsctl(&["get", MEDIA_KEYS, "custom-keybindings"]).ok()["is_default"], true);
     let name = env.gsctl(&["get", CUSTOM, "name", "--path", CUSTOM0]).ok();
@@ -217,7 +217,7 @@ fn find_and_conflicts_see_active_extension_bindings() {
     assert_eq!(out["free"], false);
     assert_eq!(out["bindings"][0]["extension"], "demo@gsctl.test");
 
-    let r = env.gsctl(&["keys", "add", "Terminal", "<Super>t", "ptyxis"]);
+    let r = env.gsctl(&["keys", "add", "Terminal", "<Super>t", "ptyxis", "--yes"]);
     assert_eq!(r.status, 7, "{}", r.stderr);
     assert!(r.error()["error"]["message"].as_str().unwrap().contains("demo@gsctl.test take-window"));
 
@@ -285,7 +285,7 @@ fn invalid_accelerators_are_refused_with_a_suggestion() {
 #[test]
 fn add_refuses_a_duplicate_name() {
     let env = TestEnv::new();
-    env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis"]).ok();
+    env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis", "--yes"]).ok();
     let r = env.gsctl(&["keys", "add", "Terminal", "<Super>F5", "kitty", "--dry-run"]);
     assert_eq!(r.status, 7, "{}", r.stderr);
     let err = &r.error()["error"];
@@ -296,14 +296,14 @@ fn add_refuses_a_duplicate_name() {
     let msg = err["message"].as_str().unwrap();
     assert!(msg.contains(CUSTOM0) && msg.contains("ptyxis"), "{msg}");
 
-    env.gsctl(&["keys", "add", "Terminal", "<Super>F5", "kitty", "--force"]).ok();
+    env.gsctl(&["keys", "add", "Terminal", "<Super>F5", "kitty", "--force", "--yes"]).ok();
     assert_eq!(env.gsctl(&["keys", "list", "--custom"]).ok()["count"], 2);
 }
 
 #[test]
 fn add_stores_the_trimmed_accelerator_as_typed() {
     let env = TestEnv::new();
-    let out = env.gsctl(&["keys", "add", "Files", "  <Primary><super>e ", "nautilus"]).ok();
+    let out = env.gsctl(&["keys", "add", "Files", "  <Primary><super>e ", "nautilus", "--yes"]).ok();
     assert_eq!(out["accel"], "<Primary><super>e");
     assert_eq!(out["normalized"], "<Control><Super>e");
     assert_eq!(env.gsctl(&["get", CUSTOM, "binding", "--path", CUSTOM0]).ok()["value"], "<Primary><super>e");
@@ -317,7 +317,7 @@ fn add_and_remove_pass_yes_through_and_report_requires_yes() {
     env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis", "--yes"]).ok();
     let dry = env.gsctl(&["keys", "remove", "Terminal", "--dry-run"]).ok();
     assert!(dry["requires_yes"].is_boolean(), "{dry}");
-    env.gsctl(&["keys", "remove", "Terminal", "--yes"]).ok();
+    env.gsctl(&["keys", "remove", "Terminal"]).ok();
     assert_eq!(env.gsctl(&["keys", "list", "--custom"]).ok()["count"], 0);
 }
 
@@ -328,8 +328,8 @@ fn text_output_names_bindings_for_people() {
     assert_eq!(r.status, 0, "{}", r.stderr);
     assert_eq!(r.stdout.trim(), "no conflicts");
 
-    env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis"]).ok();
-    let r = env.gsctl(&["keys", "add", "Other", "<Super>Return", "kitty"]);
+    env.gsctl(&["keys", "add", "Terminal", "<Super>Return", "ptyxis", "--yes"]).ok();
+    let r = env.gsctl(&["keys", "add", "Other", "<Super>Return", "kitty", "--yes"]);
     assert_eq!(r.status, 7);
     let msg = r.error()["error"]["message"].as_str().unwrap().to_string();
     assert!(msg.contains(r#"custom "Terminal""#), "{msg}");
@@ -348,7 +348,7 @@ fn add_rolls_back_when_a_write_fails() {
     }
     let env = TestEnv::new();
     let script = format!(
-        r#"GSCTL_TEST_FAIL_WRITE='{MEDIA_KEYS} custom-keybindings' "$GSCTL" keys add Terminal '<Super>Return' ptyxis > "$TMP/fail.out" 2> "$TMP/fail.err"; echo $? > "$TMP/fail.status""#
+        r#"GSCTL_TEST_FAIL_WRITE='{MEDIA_KEYS} custom-keybindings' "$GSCTL" keys add Terminal '<Super>Return' ptyxis --yes > "$TMP/fail.out" 2> "$TMP/fail.err"; echo $? > "$TMP/fail.status""#
     );
     env.session_script(&script);
     let status: i32 = std::fs::read_to_string(env.path("fail.status")).unwrap().trim().parse().unwrap();
