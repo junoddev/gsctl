@@ -85,6 +85,47 @@ fn reports_resets_and_custom_keybindings() {
 }
 
 #[test]
+fn count_is_never_exceeded_by_multi_key_changes() {
+    let env = TestEnv::new();
+    let doc = serde_json::json!({"gsctl": 1, "settings": {
+        "org.gsctl.test": { "count-i": 50, "name-s": "X", "size-u": 600, "flag-b": true }
+    }});
+    let file = env.path("multi.json");
+    std::fs::write(&file, doc.to_string()).unwrap();
+    for count in [1, 2] {
+        let events =
+            watch_while(&env, &format!("--count {count} --timeout 20"), &[&format!("apply {}", file.display())]);
+        assert_eq!(events.len(), count + 1, "{events:?}");
+        env.gsctl(&["revert", "last"]).ok();
+    }
+}
+
+#[test]
+fn huge_timeouts_do_not_wrap() {
+    let env = TestEnv::new();
+    // 4294968 s is 4294968000 ms, which wrapped to 704 ms as a u32.
+    let script = r#"set -e
+"$GSCTL" watch --count 1 --timeout 4294968 > "$TMP/watch.out" &
+pid=$!
+for i in $(seq 200); do grep -q '"ready"' "$TMP/watch.out" 2>/dev/null && break; sleep 0.05; done
+sleep 1.5
+"$GSCTL" set org.gsctl.test count-i 11 > /dev/null
+wait $pid
+"#;
+    let run = env.session_script(script);
+    assert_eq!(run.status, 0, "{}", run.stderr);
+    let out = std::fs::read_to_string(env.path("watch.out")).unwrap();
+    let kinds: Vec<String> =
+        out.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()["event"].as_str().unwrap().to_string()).collect();
+    assert_eq!(kinds, ["ready", "changed"]);
+
+    // Beyond u32 seconds is refused up front.
+    let r = env.gsctl(&["watch", "--timeout", "4294967296"]);
+    assert_eq!(r.status, 2, "{}{}", r.stdout, r.stderr);
+    assert_eq!(r.error()["error"]["code"], "usage");
+}
+
+#[test]
 fn timeout_ends_the_stream() {
     let env = TestEnv::new();
     let events = watch_while(&env, "--timeout 1", &[]);

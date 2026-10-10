@@ -7,14 +7,14 @@
 use std::cell::Cell;
 use std::io::Write;
 use std::rc::Rc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use gio::prelude::*;
 use serde_json::{Value, json};
 
 use crate::commands::matches_prefix;
 use crate::convert::to_json;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::index::Index;
 
 pub struct WatchOpts<'a> {
@@ -40,6 +40,14 @@ fn now_ms() -> u128 {
 /// Runs until `count` events or `timeout`, or forever. Prints its own output;
 /// returns `None` so main prints nothing more.
 pub fn watch(index: &Index, opts: &WatchOpts) -> Result<Option<Value>> {
+    // GLib timeouts are u32: in milliseconds they wrap after ~49 days, so
+    // count in seconds and refuse what doesn't fit (~136 years).
+    let timeout = match opts.timeout {
+        Some(secs) => Some(u32::try_from(secs).map_err(|_| {
+            Error::Usage(format!("--timeout {secs} is too large; the maximum is {} seconds", u32::MAX))
+        })?),
+        None => None,
+    };
     let main = glib::MainLoop::new(None, false);
     let seen = Rc::new(Cell::new(0usize));
     let mut watched: Vec<gio::Settings> = Vec::new();
@@ -49,6 +57,11 @@ pub fn watch(index: &Index, opts: &WatchOpts) -> Result<Option<Value>> {
         let schema = entry.id();
         let (main, seen, count) = (main.clone(), seen.clone(), opts.count);
         settings.connect_changed(None, move |s, key| {
+            // One dconf change can signal several keys before quit() takes
+            // effect: never print more than `count`.
+            if count.is_some_and(|c| seen.get() >= c) {
+                return;
+            }
             emit(&json!({
                 "event": "changed",
                 "time_ms": now_ms() as u64,
@@ -85,9 +98,9 @@ pub fn watch(index: &Index, opts: &WatchOpts) -> Result<Option<Value>> {
     if opts.count == Some(0) {
         return Ok(None);
     }
-    if let Some(secs) = opts.timeout {
+    if let Some(secs) = timeout {
         let main = main.clone();
-        glib::timeout_add_local_once(Duration::from_secs(secs), move || {
+        glib::timeout_add_seconds_local_once(secs, move || {
             emit(&json!({ "event": "timeout", "time_ms": now_ms() as u64 }));
             main.quit();
         });
