@@ -1,9 +1,9 @@
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::error::ErrorKind;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use gsctl::commands::{self, WriteOpts};
 use gsctl::doctor;
 use gsctl::error::{Error, Result};
@@ -19,12 +19,26 @@ use serde_json::Value;
 /// Typical loop: `gsctl search <words>` → `gsctl schema <schema> <key>` →
 /// `gsctl set <schema> <key> <value> --dry-run` → `gsctl set ...` → `gsctl get ...`.
 ///
-/// Output is JSON on stdout; errors are JSON on stderr. Exit codes: 0 ok,
-/// 1 internal error, 2 usage, 3 schema or key not found, 4 invalid value,
-/// 5 not writable, 6 guarded key (needs --yes), 7 conflict (revert of a key
-/// changed since; needs --force).
+/// Output is JSON on stdout and errors are JSON on stderr, for agents. For
+/// people: `--format text`, or `export GSCTL_FORMAT=text`; errors are plain
+/// text when stderr is a terminal. Exit codes: 0 ok, 1 internal error,
+/// 2 usage, 3 schema or key not found, 4 invalid value, 5 not writable,
+/// 6 guarded key (needs --yes), 7 conflict (revert of a key changed since;
+/// needs --force).
 #[derive(Parser)]
-#[command(name = "gsctl", version, max_term_width = 100, arg_required_else_help = true)]
+#[command(
+    name = "gsctl",
+    version,
+    max_term_width = 100,
+    arg_required_else_help = true,
+    after_help = "Examples:
+  gsctl doctor                                        # can gsctl reach this session?
+  gsctl search animations --format text
+  gsctl set org.gnome.desktop.interface color-scheme prefer-dark --dry-run
+  gsctl revert last                                   # undo the last change
+
+Shell completions: gsctl completions bash|zsh|fish. Man page: gsctl man."
+)]
 struct Cli {
     /// Output format [default: json, or $GSCTL_FORMAT].
     #[arg(long, global = true, value_enum)]
@@ -43,8 +57,14 @@ enum Format {
 #[derive(Subcommand)]
 enum Command {
     /// Ranked search over schema ids, key names, summaries and descriptions.
+    #[command(after_help = "Examples:
+  gsctl search animations
+  gsctl search clock seconds --format text
+  gsctl search lock --schema org.gnome.desktop --limit 5
+
+GNOME's words may not be yours: try a single word (\"dark\", not \"dark mode\").")]
     Search {
-        /// Words to search for; every word must match.
+        /// Words to search for; keys matching every word come first.
         #[arg(required = true)]
         query: Vec<String>,
         /// Maximum number of results.
@@ -57,7 +77,9 @@ enum Command {
     /// Describe a key (type, default, current value, allowed values), a whole
     /// schema, or list every schema when called without arguments.
     Schema {
+        /// Schema id, e.g. org.gnome.desktop.interface; omit to list every schema.
         schema: Option<String>,
+        /// Key name, e.g. color-scheme; omit to list the schema's keys.
         key: Option<String>,
         /// Instance path for a relocatable schema, e.g. /org/gnome/.../custom0/.
         #[arg(long)]
@@ -65,7 +87,9 @@ enum Command {
     },
     /// Print a key's current value.
     Get {
+        /// Schema id, e.g. org.gnome.desktop.interface.
         schema: String,
+        /// Key name, e.g. color-scheme.
         key: String,
         /// Instance path for a relocatable schema.
         #[arg(long)]
@@ -73,9 +97,25 @@ enum Command {
     },
     /// Validate and write a value. VALUE is JSON (true, 42, "text", ["a","b"]),
     /// GVariant text (@as [], ('xkb', 'us')), or bare text for string keys.
+    #[command(after_help = r#"Examples (one per value type; quote anything with [ ] < > ( ) spaces or quotes):
+  gsctl set org.gnome.desktop.interface color-scheme prefer-dark       # string: bare text
+  gsctl set org.gnome.desktop.wm.preferences button-layout ''          # empty string
+  gsctl set org.gnome.desktop.interface clock-show-seconds true        # boolean (or yes/no, on/off)
+  gsctl set org.gnome.desktop.session idle-delay 600                   # integer
+  gsctl set org.gnome.desktop.interface text-scaling-factor 1.25       # number
+  gsctl set org.gnome.shell favorite-apps '["firefox.desktop", "org.gnome.Nautilus.desktop"]'
+  gsctl set org.gnome.desktop.wm.keybindings switch-to-workspace-1 '["<Super>1"]'
+  gsctl set org.gnome.desktop.wm.keybindings show-desktop '[]'         # empty list
+  gsctl set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('xkb', 'de')]" --yes
+
+Check with --dry-run first. `gsctl schema SCHEMA KEY` shows the type and allowed values;
+`gsctl revert last` undoes the change."#)]
     Set {
+        /// Schema id, e.g. org.gnome.desktop.interface.
         schema: String,
+        /// Key name, e.g. color-scheme.
         key: String,
+        /// The new value (see the examples below for quoting).
         #[arg(allow_hyphen_values = true)]
         value: String,
         /// Instance path for a relocatable schema.
@@ -90,7 +130,9 @@ enum Command {
     },
     /// Reset a key to its default.
     Reset {
+        /// Schema id, e.g. org.gnome.desktop.interface.
         schema: String,
+        /// Key name, e.g. color-scheme.
         key: String,
         /// Instance path for a relocatable schema.
         #[arg(long)]
@@ -107,6 +149,13 @@ enum Command {
     /// (counters, timestamps, migration markers) is skipped unless
     /// --include-state. The remote area (remote desktop, including whether
     /// RDP is enabled) is left out unless --include-remote or --area remote.
+    #[command(after_help = "Examples:
+  gsctl export --format text                          # what would be exported, per area
+  gsctl export --out ~/dotfiles/gnome                 # one <area>.json per area
+  gsctl export --area keybindings --area interface > gnome.json
+
+Then commit the directory, and on another machine (or later):
+  gsctl apply ~/dotfiles/gnome --dry-run && gsctl apply ~/dotfiles/gnome")]
     Export {
         /// Only these areas (repeatable); see `gsctl areas`.
         #[arg(long)]
@@ -124,6 +173,12 @@ enum Command {
     /// Apply state files from `export`. Validates every value first and writes
     /// nothing if any is invalid; only keys that differ are written, as one
     /// journal batch (`gsctl revert <batch>` undoes it).
+    #[command(after_help = "Examples:
+  gsctl apply ~/dotfiles/gnome --dry-run --format text   # every *.json in the directory
+  gsctl apply ~/dotfiles/gnome
+  gsctl apply interface.json keybindings.json --area keybindings
+  gsctl apply ~/dotfiles/gnome --prune --dry-run         # also reset keys the files don't list
+  gsctl revert last                                      # undo the whole apply")]
     Apply {
         /// State files from `gsctl export`, or a directory of them (every
         /// *.json in it, in name order), such as the one `export --out` wrote.
@@ -146,7 +201,10 @@ enum Command {
     },
     /// Stream changes as NDJSON: a "ready" event, then one "changed" event per
     /// key change (schema, key, value). Runs until interrupted, --count or
-    /// --timeout.
+    /// --timeout. With --format text, prints `HH:MM:SS schema key = value`.
+    #[command(after_help = "Examples:
+  gsctl watch --format text                           # then change something in Settings
+  gsctl watch --schema org.gnome.desktop.interface --count 1 --timeout 30")]
     Watch {
         /// Only this schema and the schemas below it (repeatable).
         #[arg(long)]
@@ -184,7 +242,13 @@ enum Command {
     /// Undo a recorded change: restore the previous value, or reset the key if
     /// it was at its default. ID is an entry or batch id from `gsctl history`,
     /// or `last` (the newest entry, or its whole batch).
+    #[command(after_help = "Examples:
+  gsctl revert last --dry-run                         # what the undo would do
+  gsctl revert last                                   # undo the newest change (or batch)
+  gsctl revert last                                   # again: the one before, like an undo stack
+  gsctl revert apply-1791575264841-248795-1           # a batch id from `gsctl history`")]
     Revert {
+        /// Entry or batch id from `gsctl history`, or `last`.
         id: String,
         /// Revert even if the key has changed since the entry.
         #[arg(long)]
@@ -202,6 +266,21 @@ enum Command {
         #[arg(long)]
         schema: Vec<String>,
     },
+    /// Print a shell completion script.
+    #[command(after_help = "Install:
+  gsctl completions bash > ~/.local/share/bash-completion/completions/gsctl
+  gsctl completions zsh > ~/.zfunc/_gsctl            # with fpath+=(~/.zfunc) in ~/.zshrc
+  gsctl completions fish > ~/.config/fish/completions/gsctl.fish")]
+    Completions {
+        /// The shell to complete for.
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+    /// Print the man page (roff).
+    #[command(after_help = "Install:
+  mkdir -p ~/.local/share/man/man1 && gsctl man > ~/.local/share/man/man1/gsctl.1
+  man gsctl")]
+    Man,
 }
 
 #[derive(Subcommand)]
@@ -209,16 +288,23 @@ enum ExtCommand {
     /// Installed extensions and whether each is enabled in settings.
     List,
     /// One extension's metadata and settings (keys with current values).
-    Info { uuid: String },
-    /// Enable an installed extension (adds just its uuid; no --yes needed).
-    Enable {
+    Info {
+        /// Extension uuid, e.g. dash-to-dock@micxgx.gmail.com (see `gsctl ext list`).
         uuid: String,
+    },
+    /// Enable an installed extension (adds just its uuid).
+    Enable {
+        /// Extension uuid (see `gsctl ext list`).
+        uuid: String,
+        /// Show the change without writing it.
         #[arg(long)]
         dry_run: bool,
     },
-    /// Disable an extension (removes just its uuid; no --yes needed).
+    /// Disable an extension (removes just its uuid).
     Disable {
+        /// Extension uuid (see `gsctl ext list`).
         uuid: String,
+        /// Show the change without writing it.
         #[arg(long)]
         dry_run: bool,
     },
@@ -228,7 +314,10 @@ enum ExtCommand {
 enum KeysCommand {
     /// What is bound to ACCEL? e.g. '<Super>t'. Aliases and modifier order
     /// don't matter (<Ctrl> = <Primary> = <Control>).
-    Find { accel: String },
+    Find {
+        /// Accelerator in GTK syntax, e.g. '<Super>t' (quote it: < and > are shell redirects).
+        accel: String,
+    },
     /// Every binding that has an accelerator.
     List {
         /// Only custom keybindings.
@@ -239,9 +328,19 @@ enum KeysCommand {
     Conflicts,
     /// Add a custom keybinding that runs COMMAND. Refuses an accelerator
     /// that's already bound unless --force.
+    #[command(after_help = "Examples:
+  gsctl keys add Terminal '<Super>Return' ptyxis --dry-run
+  gsctl keys add 'Screenshot area' '<Super><Shift>s' 'gnome-screenshot -a'
+  gsctl keys find '<Super>Return'                     # check it's there
+  gsctl revert last                                   # undo the add
+
+Quote the accelerator: < and > are shell redirects.")]
     Add {
+        /// Name shown in Settings, e.g. Terminal.
         name: String,
+        /// Accelerator in GTK syntax, e.g. '<Super>Return'.
         accel: String,
+        /// Command line to run, e.g. ptyxis (quote it if it has spaces).
         command: String,
         /// Add even if ACCEL is already bound.
         #[arg(long)]
@@ -253,6 +352,7 @@ enum KeysCommand {
     /// Remove a custom keybinding, by name, path or `customN`. `gsctl revert
     /// last` brings it back.
     Remove {
+        /// The binding's name, its path, or `customN` (see `gsctl keys list --custom`).
         binding: String,
         /// Show the writes without making them.
         #[arg(long)]
@@ -263,6 +363,20 @@ enum KeysCommand {
 /// The JSON document to print, or `None` for streaming commands that print
 /// their own output.
 fn run(cli: &Cli, text: bool) -> Result<Option<Value>> {
+    // These describe the CLI itself and need no session.
+    let mut buf = Vec::new();
+    match &cli.command {
+        Command::Completions { shell } => clap_complete::generate(*shell, &mut Cli::command(), "gsctl", &mut buf),
+        Command::Man => clap_mangen::Man::new(Cli::command())
+            .render(&mut buf)
+            .map_err(|e| Error::Internal(format!("cannot render the man page: {e}")))?,
+        _ => {}
+    }
+    if !buf.is_empty() {
+        // A closed pipe (`| head`) is fine.
+        let _ = std::io::stdout().write_all(&buf);
+        return Ok(None);
+    }
     let index = Index::load()?;
     if let Command::Watch { schema, count, timeout } = &cli.command {
         return watch::watch(&index, &WatchOpts { prefixes: schema, count: *count, timeout: *timeout, text });
@@ -315,7 +429,7 @@ fn run(cli: &Cli, text: bool) -> Result<Option<Value>> {
         },
         Command::History { limit, schema, key } => commands::history(*limit, schema, key.as_deref()),
         Command::Revert { id, force, dry_run, yes } => commands::revert(&index, id, *force, *dry_run, *yes),
-        Command::Watch { .. } => unreachable!("handled above"),
+        Command::Watch { .. } | Command::Completions { .. } | Command::Man => unreachable!("handled above"),
     }
     .map(Some)
 }
@@ -342,6 +456,8 @@ fn command_name(c: &Command) -> &'static str {
         Command::Keys(KeysCommand::Remove { .. }) => "keys-remove",
         Command::History { .. } => "history",
         Command::Revert { .. } => "revert",
+        Command::Completions { .. } => "completions",
+        Command::Man => "man",
     }
 }
 

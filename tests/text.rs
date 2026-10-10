@@ -86,6 +86,46 @@ fn gsctl_format_env_sets_the_default() {
     assert!(r.stderr.contains("GSCTL_FORMAT"), "{}", r.stderr);
 }
 
+#[test]
+fn help_describes_arguments_and_has_examples() {
+    let env = TestEnv::new();
+    let help = env.gsctl(&["set", "--help"]).stdout;
+    assert!(help.contains("<SCHEMA>  Schema id"), "{help}");
+    assert!(help.contains("Examples"), "{help}");
+    assert!(help.contains(r#"'["<Super>1"]'"#), "{help}");
+    for cmd in [
+        &["keys", "add", "--help"][..],
+        &["apply", "--help"],
+        &["revert", "--help"],
+        &["export", "--help"],
+        &["search", "--help"],
+    ] {
+        let help = env.gsctl(cmd).stdout;
+        assert!(help.contains("Examples:"), "{cmd:?}: {help}");
+    }
+    let help = env.gsctl(&["ext", "enable", "--help"]).stdout;
+    assert!(
+        help.lines().any(|l| l.contains("--dry-run") && l.contains("Show the change without writing it")),
+        "{help}"
+    );
+    assert!(help.contains("<UUID>  Extension uuid"), "{help}");
+}
+
+#[test]
+fn completions_and_man_page() {
+    let env = TestEnv::new();
+    for (shell, marker) in [("bash", "_gsctl()"), ("zsh", "#compdef gsctl"), ("fish", "complete -c gsctl")] {
+        let r = env.gsctl(&["completions", shell]);
+        assert_eq!(r.status, 0, "{}", r.stderr);
+        assert!(r.stdout.contains(marker), "{shell}: {}", &r.stdout[..r.stdout.len().min(200)]);
+        assert!(r.stdout.contains("apply"), "{shell}");
+    }
+    let r = env.gsctl(&["man"]);
+    assert_eq!(r.status, 0);
+    assert!(r.stdout.contains(".TH gsctl 1"), "{}", &r.stdout[..200]);
+    assert!(r.stdout.contains("completions"));
+}
+
 // --- text renderers ---------------------------------------------------------
 
 #[test]
