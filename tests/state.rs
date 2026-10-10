@@ -318,6 +318,117 @@ fn batch_revert_checks_every_key_first() {
 }
 
 #[test]
+fn batch_revert_checks_writability_before_writing() {
+    let env = TestEnv::new();
+    // Reverted newest first: name-s, then locked-s.
+    let doc = json!({"gsctl": 1, "settings": { S: { "locked-s": "mine", "name-s": "Theirs" } }});
+    let file = write_json(&env, "a.json", &doc);
+    let batch = env.gsctl(&["apply", &file]).ok()["batch"].as_str().unwrap().to_string();
+    env.lock_key();
+    let before = journal_len(&env);
+
+    let r = env.gsctl(&["revert", &batch, "--force"]);
+    assert_eq!(r.status, 5, "{}{}", r.stdout, r.stderr);
+    assert_eq!(env.gsctl(&["get", S, "name-s"]).ok()["value"], "Theirs", "nothing reverted");
+    assert_eq!(journal_len(&env), before);
+    // The batch is still the one to undo.
+    let r = env.gsctl(&["revert", "last", "--dry-run"]);
+    assert_eq!(r.status, 5);
+    assert_eq!(r.error()["error"]["key"], "locked-s");
+}
+
+#[test]
+fn a_partly_reverted_batch_is_not_undone() {
+    let env = TestEnv::new();
+    env.gsctl(&["set", S, "size-u", "600"]).ok();
+    let doc = json!({"gsctl": 1, "settings": { S: { "count-i": 50, "name-s": "Theirs" } }});
+    let file = write_json(&env, "a.json", &doc);
+    let batch = env.gsctl(&["apply", &file]).ok()["batch"].as_str().unwrap().to_string();
+    let h = env.gsctl(&["history", "--key", "count-i"]).ok();
+    let count_entry = h["entries"][0]["id"].as_str().unwrap().to_string();
+    env.gsctl(&["revert", &count_entry]).ok();
+
+    // `revert last` finishes the batch: only name-s is left to undo.
+    let out = env.gsctl(&["revert", "last"]).ok();
+    assert_eq!(out["reverts_batch"], batch.as_str(), "{out}");
+    let results = out["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["key"], "name-s");
+    assert_eq!(env.gsctl(&["get", S, "size-u"]).ok()["value"], 600);
+
+    // Now the whole batch is undone.
+    let r = env.gsctl(&["revert", &batch]);
+    assert_eq!(r.status, 7, "{}{}", r.stdout, r.stderr);
+    assert!(r.error()["error"]["message"].as_str().unwrap().contains("already"));
+    let next = env.gsctl(&["revert", "last", "--dry-run"]).ok();
+    assert_eq!(next["key"], "size-u");
+}
+
+/// Run gsctl with a write of `fail` ("schema key") made to fail (a debug-build
+/// test hook); returns the exit status and the JSON error.
+fn gsctl_failing_write(env: &TestEnv, fail: &str, args: &[&str]) -> (i32, Value) {
+    let args: Vec<String> = args.iter().map(|a| format!("'{a}'")).collect();
+    let script = format!(
+        r#"GSCTL_TEST_FAIL_WRITE='{fail}' "$GSCTL" {} > "$TMP/fail.out" 2> "$TMP/fail.err"; echo $? > "$TMP/fail.status""#,
+        args.join(" ")
+    );
+    env.session_script(&script);
+    let status = std::fs::read_to_string(env.path("fail.status")).unwrap().trim().parse().unwrap();
+    let err = std::fs::read_to_string(env.path("fail.err")).unwrap();
+    (status, serde_json::from_str(&err).unwrap_or_else(|e| panic!("{e}: {err}")))
+}
+
+#[test]
+fn apply_rolls_back_when_a_write_fails() {
+    if !cfg!(debug_assertions) {
+        return; // the fault hook only exists in debug builds
+    }
+    let env = TestEnv::new();
+    let doc = json!({"gsctl": 1, "settings": { S: { "count-i": 50, "name-s": "Theirs", "size-u": 600 } }});
+    let file = write_json(&env, "a.json", &doc);
+    let (status, err) = gsctl_failing_write(&env, "org.gsctl.test name-s", &["apply", &file]);
+    assert_eq!(status, 1, "{err}");
+    let err = &err["error"];
+    assert_eq!(err["code"], "internal");
+    assert!(err["batch"].as_str().unwrap().starts_with("apply-"), "{err}");
+    let rolled: Vec<&str> = err["rolled_back"].as_array().unwrap().iter().map(|c| c["key"].as_str().unwrap()).collect();
+    assert_eq!(rolled, ["count-i"]);
+    assert_eq!(err["not_rolled_back"], json!([]));
+    for key in ["count-i", "name-s", "size-u"] {
+        assert_eq!(env.gsctl(&["get", S, key]).ok()["is_default"], true, "{key}");
+    }
+    // The rollback undid the partial batch, so there is nothing to undo.
+    assert_eq!(env.gsctl(&["revert", "last"]).status, 3);
+}
+
+#[test]
+fn batch_revert_rolls_back_when_a_write_fails() {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let env = TestEnv::new();
+    let doc = json!({"gsctl": 1, "settings": { S: { "count-i": 50, "name-s": "Theirs", "size-u": 600 } }});
+    let file = write_json(&env, "a.json", &doc);
+    let batch = env.gsctl(&["apply", &file]).ok()["batch"].as_str().unwrap().to_string();
+
+    // Reverted newest first, so count-i fails after size-u and name-s.
+    let (status, err) = gsctl_failing_write(&env, "org.gsctl.test count-i", &["revert", "last"]);
+    assert_eq!(status, 1, "{err}");
+    assert_eq!(err["error"]["batch"], format!("revert-{batch}"));
+    assert_eq!(err["error"]["rolled_back"].as_array().unwrap().len(), 2);
+    assert_eq!(env.gsctl(&["get", S, "name-s"]).ok()["value"], "Theirs");
+    assert_eq!(env.gsctl(&["get", S, "size-u"]).ok()["value"], 600);
+
+    // The apply is still in effect as a whole, and undoes cleanly.
+    let out = env.gsctl(&["revert", "last"]).ok();
+    assert_eq!(out["reverts_batch"], batch.as_str());
+    assert_eq!(out["results"].as_array().unwrap().len(), 3);
+    for key in ["count-i", "name-s", "size-u"] {
+        assert_eq!(env.gsctl(&["get", S, key]).ok()["is_default"], true, "{key}");
+    }
+}
+
+#[test]
 fn apply_prune_resets_unlisted_keys_in_the_files_areas() {
     let env = TestEnv::new();
     customise(&env); // count-i, dict-asv, launch-count (state), lock-delay (power), a custom keybinding

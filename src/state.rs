@@ -25,7 +25,7 @@ use gio::prelude::*;
 use glib::Variant;
 use serde_json::{Map, Value, json};
 
-use crate::commands::{Action, Tags, WriteOpts, range_error, write};
+use crate::commands::{Action, BatchItem, range_error, write_batch};
 use crate::convert::{from_json, to_json};
 use crate::error::{Error, Result};
 use crate::index::{Entry, Index};
@@ -522,12 +522,21 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
     }
 
     let batch = journal::new_id(Some("apply"));
+    let items = planned
+        .iter()
+        .chain(&pruned)
+        .map(|p| BatchItem {
+            entry: p.entry,
+            key: p.key.clone(),
+            path: p.path.clone(),
+            action: if p.reset { Action::Reset } else { Action::Set(p.value.clone()) },
+            yes: true,
+            reverts: None,
+        })
+        .collect();
+    let outs = write_batch(items, "apply", Some(&batch), false)?;
     let (mut changes, mut resets) = (Vec::new(), Vec::new());
-    for p in planned.iter().chain(&pruned) {
-        let opts = WriteOpts { path: p.path.as_deref(), dry_run: false, yes: true };
-        let tags = Tags { reverts: None, batch: Some(&batch) };
-        let action = if p.reset { Action::Reset } else { Action::Set(p.value.clone()) };
-        let out = write(p.entry, &p.key, &opts, "apply", action, tags)?;
+    for (p, out) in planned.iter().chain(&pruned).zip(outs) {
         let mut c = change_json(p);
         c["journal_id"] = out["journal_id"].clone();
         if p.reset { resets.push(c) } else { changes.push(c) }

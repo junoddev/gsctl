@@ -31,6 +31,11 @@ pub enum Error {
     Batch { message: String, exit: i32, problems: Value },
     #[error("{0}")]
     Internal(String),
+    /// A write in a batch failed after earlier writes were made. `details`
+    /// (`batch`, `rolled_back`, `not_rolled_back`) is merged into the JSON;
+    /// code and exit status are the failed write's.
+    #[error("{message}")]
+    BatchWrite { error: Box<Error>, message: String, details: Value },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -50,6 +55,7 @@ impl Error {
             Error::Guarded { .. } => 6,
             Error::Conflict { .. } => 7,
             Error::Batch { exit, .. } => *exit,
+            Error::BatchWrite { error, .. } => error.exit_code(),
         }
     }
 
@@ -68,10 +74,19 @@ impl Error {
             Error::BindingNotFound(_) => "binding_not_found",
             Error::Conflict { .. } => "conflict",
             Error::Batch { .. } => "batch_invalid",
+            Error::BatchWrite { error, .. } => error.code(),
         }
     }
 
     pub fn to_json(&self) -> Value {
+        if let Error::BatchWrite { error, message, details } = self {
+            let mut out = error.to_json();
+            if let (Value::Object(err), Value::Object(details)) = (&mut out["error"], details.clone()) {
+                err.insert("message".into(), message.clone().into());
+                err.extend(details);
+            }
+            return out;
+        }
         let mut err = json!({
             "code": self.code(),
             "exit_code": self.exit_code(),
@@ -93,7 +108,7 @@ impl Error {
             Error::Conflict { id, .. } => json!({ "id": id }),
             Error::Batch { problems, .. } => json!({ "problems": problems }),
             Error::NoSession(reason) => json!({ "reason": reason, "hint": "run `gsctl doctor`" }),
-            Error::Usage(_) | Error::Internal(_) => Value::Null,
+            Error::Usage(_) | Error::Internal(_) | Error::BatchWrite { .. } => Value::Null,
         };
         if let (Value::Object(err), Value::Object(extra)) = (&mut err, extra) {
             err.extend(extra);

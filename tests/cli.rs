@@ -568,6 +568,63 @@ fn revert_last_walks_back_like_an_undo_stack() {
 }
 
 #[test]
+fn revert_last_after_a_redo_undoes_the_redone_change() {
+    let env = TestEnv::new();
+    let a = env.gsctl(&["set", S, "count-i", "1"]).ok();
+    let b = env.gsctl(&["set", S, "name-s", "B"]).ok();
+    let undo = env.gsctl(&["revert", "last"]).ok();
+    assert_eq!(undo["reverts"], id_of(&b));
+    env.gsctl(&["revert", &id_of(&undo)]).ok(); // redo B
+    assert_eq!(env.gsctl(&["get", S, "name-s"]).ok()["value"], "B");
+
+    // B is in effect again, so it is the newest change to undo; A stays.
+    let again = env.gsctl(&["revert", "last"]).ok();
+    assert_eq!(again["reverts"], id_of(&b), "{again}");
+    assert_eq!(env.gsctl(&["get", S, "name-s"]).ok()["is_default"], true);
+    assert_eq!(env.gsctl(&["get", S, "count-i"]).ok()["value"], 1);
+
+    // History marks B undone by the newest revert, which is in effect.
+    let h = env.gsctl(&["history"]).ok();
+    let entry_b = h["entries"].as_array().unwrap().iter().find(|e| e["id"] == id_of(&b).as_str()).unwrap().clone();
+    assert_eq!(entry_b["reverted_by"], again["journal_id"]);
+
+    let last = env.gsctl(&["revert", "last"]).ok();
+    assert_eq!(last["reverts"], id_of(&a));
+    assert_eq!(env.gsctl(&["revert", "last"]).status, 3, "nothing left to undo");
+}
+
+/// Rewrite the newest journal entry with `edit`.
+fn tamper_last_entry(env: &TestEnv, edit: impl Fn(&mut Value)) {
+    let mut entries = journal(env);
+    edit(entries.last_mut().unwrap());
+    let text: String = entries.iter().map(|e| format!("{e}\n")).collect();
+    std::fs::write(env.journal(), text).unwrap();
+}
+
+#[test]
+fn revert_guards_do_not_trust_the_journal_op() {
+    let env = TestEnv::new();
+    let screensaver = "org.gnome.desktop.screensaver";
+    env.gsctl(&["set", screensaver, "lock-enabled", "false", "--yes"]).ok();
+    tamper_last_entry(&env, |e| e["op"] = "ext-enable".into());
+    let r = env.gsctl(&["revert", "last"]);
+    assert_eq!(r.status, 6, "{}{}", r.stdout, r.stderr);
+    assert_eq!(env.gsctl(&["get", screensaver, "lock-enabled"]).ok()["value"], false);
+
+    // A wholesale change of enabled-extensions is not a one-uuid edit, whatever the op says.
+    let env = TestEnv::new();
+    env.gsctl(&["set", "org.gnome.shell", "enabled-extensions", r#"["a@x","b@x","c@x"]"#, "--yes"]).ok();
+    tamper_last_entry(&env, |e| e["op"] = "ext-disable".into());
+    assert_eq!(env.gsctl(&["revert", "last"]).status, 6);
+    env.gsctl(&["revert", "last", "--yes"]).ok();
+
+    // A one-uuid edit is targeted by its values, even when made by `set`.
+    env.gsctl(&["set", "org.gnome.shell", "enabled-extensions", r#"["a@x"]"#, "--yes"]).ok();
+    env.gsctl(&["revert", "last"]).ok();
+    assert_eq!(env.gsctl(&["get", "org.gnome.shell", "enabled-extensions"]).ok()["is_default"], true);
+}
+
+#[test]
 fn revert_relocatable_keys() {
     let env = TestEnv::new();
     let p = "/org/gsctl/test/custom1/";
