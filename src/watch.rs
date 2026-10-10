@@ -7,6 +7,7 @@
 use std::cell::Cell;
 use std::io::Write;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gio::prelude::*;
@@ -23,12 +24,29 @@ pub struct WatchOpts<'a> {
     pub count: Option<usize>,
     /// Exit after this many seconds.
     pub timeout: Option<u64>,
+    /// Lines for people (`HH:MM:SS schema key = value`) instead of NDJSON.
+    pub text: bool,
 }
 
+/// Set from `WatchOpts::text` for the rest of the process.
+static TEXT: AtomicBool = AtomicBool::new(false);
+
 fn emit(v: &Value) {
+    if TEXT.load(Ordering::Relaxed) {
+        match crate::text::watch_event(v) {
+            Some((line, true)) => eprintln!("{line}"),
+            Some((line, false)) => write_line(&line),
+            None => {}
+        }
+    } else {
+        write_line(&v.to_string());
+    }
+}
+
+fn write_line(line: &str) {
     let mut out = std::io::stdout().lock();
     // A closed pipe (e.g. `| head`) just ends the stream.
-    if writeln!(out, "{v}").and_then(|_| out.flush()).is_err() {
+    if writeln!(out, "{line}").and_then(|_| out.flush()).is_err() {
         std::process::exit(0);
     }
 }
@@ -40,6 +58,7 @@ fn now_ms() -> u128 {
 /// Runs until `count` events or `timeout`, or forever. Prints its own output;
 /// returns `None` so main prints nothing more.
 pub fn watch(index: &Index, opts: &WatchOpts) -> Result<Option<Value>> {
+    TEXT.store(opts.text, Ordering::Relaxed);
     let main = glib::MainLoop::new(None, false);
     let seen = Rc::new(Cell::new(0usize));
     let mut watched: Vec<gio::Settings> = Vec::new();

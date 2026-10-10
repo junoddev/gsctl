@@ -1,6 +1,8 @@
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use clap::error::ErrorKind;
 use clap::{Parser, Subcommand, ValueEnum};
 use gsctl::commands::{self, WriteOpts};
 use gsctl::doctor;
@@ -22,17 +24,17 @@ use serde_json::Value;
 /// 5 not writable, 6 guarded key (needs --yes), 7 conflict (revert of a key
 /// changed since; needs --force).
 #[derive(Parser)]
-#[command(name = "gsctl", version, max_term_width = 100)]
+#[command(name = "gsctl", version, max_term_width = 100, arg_required_else_help = true)]
 struct Cli {
-    /// Output format.
-    #[arg(long, global = true, value_enum, default_value_t = Format::Json)]
-    format: Format,
+    /// Output format [default: json, or $GSCTL_FORMAT].
+    #[arg(long, global = true, value_enum)]
+    format: Option<Format>,
 
     #[command(subcommand)]
     command: Command,
 }
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, PartialEq, ValueEnum)]
 enum Format {
     Json,
     Text,
@@ -156,10 +158,10 @@ enum Command {
     /// List the export areas and the schemas each covers.
     Areas,
     /// GNOME Shell extensions: installed, enabled, and their settings.
-    #[command(subcommand)]
+    #[command(subcommand, arg_required_else_help = true)]
     Ext(ExtCommand),
     /// Keyboard shortcuts across all keybinding schemas and custom bindings.
-    #[command(subcommand)]
+    #[command(subcommand, arg_required_else_help = true)]
     Keys(KeysCommand),
     /// List recorded changes (set, reset, revert, apply), newest first.
     History {
@@ -254,10 +256,10 @@ enum KeysCommand {
 
 /// The JSON document to print, or `None` for streaming commands that print
 /// their own output.
-fn run(cli: &Cli) -> Result<Option<Value>> {
+fn run(cli: &Cli, text: bool) -> Result<Option<Value>> {
     let index = Index::load()?;
     if let Command::Watch { schema, count, timeout } = &cli.command {
-        return watch::watch(&index, &WatchOpts { prefixes: schema, count: *count, timeout: *timeout });
+        return watch::watch(&index, &WatchOpts { prefixes: schema, count: *count, timeout: *timeout, text });
     }
     match &cli.command {
         Command::Search { query, limit, schema } => commands::search(&index, &query.join(" "), *limit, schema),
@@ -332,8 +334,51 @@ fn command_name(c: &Command) -> &'static str {
     }
 }
 
-fn fail(err: &Error) -> ExitCode {
-    eprintln!("{}", err.to_json());
+/// The output format and whether it was chosen (by `--format` or
+/// `GSCTL_FORMAT`) rather than defaulted. The flag wins over the variable.
+fn resolve_format(flag: Option<Format>) -> Result<(Format, bool)> {
+    if let Some(f) = flag {
+        return Ok((f, true));
+    }
+    match std::env::var("GSCTL_FORMAT").ok().as_deref().map(str::trim) {
+        None | Some("") => Ok((Format::Json, false)),
+        Some(v) => match Format::from_str(v, true) {
+            Ok(f) => Ok((f, true)),
+            Err(_) => Err(Error::Usage(format!("GSCTL_FORMAT must be json or text, not {v:?}"))),
+        },
+    }
+}
+
+/// `--format` from the raw arguments, for errors raised before clap has
+/// parsed them.
+fn format_flag_in_args() -> Option<Format> {
+    let args: Vec<String> = std::env::args().skip(1).take_while(|a| a != "--").collect();
+    let mut found = None;
+    for (i, a) in args.iter().enumerate() {
+        let value = match a.strip_prefix("--format") {
+            Some("") => args.get(i + 1).map(String::as_str),
+            Some(rest) => rest.strip_prefix('='),
+            None => None,
+        };
+        if let Some(f) = value.and_then(|v| Format::from_str(v, true).ok()) {
+            found = Some(f);
+        }
+    }
+    found
+}
+
+/// Errors are plain text with `--format text` (or `GSCTL_FORMAT=text`), and
+/// when no format was chosen and stderr is a terminal; JSON otherwise.
+fn text_errors(format: Format, explicit: bool) -> bool {
+    format == Format::Text || (!explicit && std::io::stderr().is_terminal())
+}
+
+fn fail(err: &Error, text: bool) -> ExitCode {
+    if text {
+        eprint!("{}", gsctl::text::render_error(&err.to_json()));
+    } else {
+        eprintln!("{}", err.to_json());
+    }
     ExitCode::from(err.exit_code() as u8)
 }
 
@@ -346,20 +391,32 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Err(e) => {
+            let (format, explicit) = resolve_format(format_flag_in_args()).unwrap_or((Format::Json, false));
+            // Bare `gsctl` (or `gsctl keys`) gets clap's help, as do people.
+            if e.kind() == ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand || text_errors(format, explicit) {
+                let _ = e.print();
+                return ExitCode::from(2);
+            }
             let message = e.render().to_string();
             let message = message.trim().trim_start_matches("error: ");
-            return fail(&Error::Usage(message.to_string()));
+            return fail(&Error::Usage(message.to_string()), false);
         }
     };
-    match run(&cli) {
+    let (format, explicit) = match resolve_format(cli.format) {
+        Ok(f) => f,
+        Err(e) => return fail(&e, std::io::stderr().is_terminal()),
+    };
+    let text = format == Format::Text;
+    match run(&cli, text) {
         Ok(None) => ExitCode::SUCCESS,
         Ok(Some(out)) => {
-            match cli.format {
-                Format::Json => println!("{}", serde_json::to_string_pretty(&out).unwrap()),
-                Format::Text => print!("{}", gsctl::text::render(command_name(&cli.command), &out)),
+            if text {
+                print!("{}", gsctl::text::render(command_name(&cli.command), &out));
+            } else {
+                println!("{}", serde_json::to_string_pretty(&out).unwrap());
             }
             ExitCode::SUCCESS
         }
-        Err(e) => fail(&e),
+        Err(e) => fail(&e, text_errors(format, explicit)),
     }
 }
