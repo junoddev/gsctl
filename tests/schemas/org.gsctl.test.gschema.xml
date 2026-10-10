@@ -148,6 +148,14 @@
     </key>
   </schema>
 
+  <!-- Stand-in for the remote desktop schema: export leaves its area out by default. -->
+  <schema id="org.gnome.desktop.remote-desktop.rdp" path="/org/gnome/desktop/remote-desktop/rdp/">
+    <key name="enable" type="b">
+      <default>false</default>
+      <summary>Whether the RDP backend is enabled or not</summary>
+    </key>
+  </schema>
+
   <!-- Stand-in for org.gnome.shell, for `gsctl ext`. -->
   <schema id="org.gnome.shell" path="/org/gnome/shell/">
     <key name="enabled-extensions" type="as">

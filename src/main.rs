@@ -105,7 +105,8 @@ enum Command {
     /// Export customised settings as JSON state files, one per area. Prints a
     /// single document, or writes <area>.json files with --out. Machine state
     /// (counters, timestamps, migration markers) is skipped unless
-    /// --include-state.
+    /// --include-state. The remote area (remote desktop, including whether
+    /// RDP is enabled) is left out unless --include-remote or --area remote.
     Export {
         /// Only these areas (repeatable); see `gsctl areas`.
         #[arg(long)]
@@ -116,11 +117,16 @@ enum Command {
         /// Also export keys that look like machine or app state.
         #[arg(long)]
         include_state: bool,
+        /// Also export the remote area (remote desktop settings).
+        #[arg(long)]
+        include_remote: bool,
     },
     /// Apply state files from `export`. Validates every value first and writes
     /// nothing if any is invalid; only keys that differ are written, as one
     /// journal batch (`gsctl revert <batch>` undoes it).
     Apply {
+        /// State files from `gsctl export`, or a directory of them (every
+        /// *.json in it, in name order), such as the one `export --out` wrote.
         #[arg(required = true)]
         files: Vec<PathBuf>,
         /// Only keys in these areas (repeatable).
@@ -276,8 +282,13 @@ fn run(cli: &Cli, text: bool) -> Result<Option<Value>> {
             commands::reset(&index, schema, key, &opts)
         }
         Command::Changed { schema } => commands::changed(&index, schema),
-        Command::Export { area, out, include_state } => {
-            let opts = ExportOpts { areas: area, out_dir: out.as_deref(), include_state: *include_state };
+        Command::Export { area, out, include_state, include_remote } => {
+            let opts = ExportOpts {
+                areas: area,
+                out_dir: out.as_deref(),
+                include_state: *include_state,
+                include_remote: *include_remote,
+            };
             state::export(&index, &opts)
         }
         Command::Apply { files, area, dry_run, yes, prune } => {
