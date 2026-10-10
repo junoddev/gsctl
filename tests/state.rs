@@ -225,6 +225,29 @@ fn apply_area_filter() {
 }
 
 #[test]
+fn apply_rejects_the_same_key_in_two_files() {
+    let env = TestEnv::new();
+    let a = write_json(&env, "a.json", &json!({"gsctl": 1, "settings": { S: { "count-i": 50, "name-s": "A" } }}));
+    let b = write_json(&env, "b.json", &json!({"gsctl": 1, "settings": { S: { "count-i": 60 } }}));
+    for args in [vec!["apply", &a, &b], vec!["apply", &a, &b, "--dry-run"]] {
+        let r = env.gsctl(&args);
+        assert_eq!(r.status, 2, "{}{}", r.stdout, r.stderr);
+        let err = r.error()["error"].clone();
+        assert_eq!(err["code"], "batch_invalid");
+        let p = &err["problems"][0];
+        assert_eq!(p["code"], "usage");
+        assert_eq!(p["key"], "count-i");
+        let msg = p["message"].as_str().unwrap();
+        assert!(msg.contains("a.json") && msg.contains("b.json"), "{msg}");
+    }
+    assert_eq!(env.gsctl(&["get", S, "name-s"]).ok()["value"], "Adwaita");
+    assert_eq!(journal_len(&env), 0);
+
+    // The same file twice is the same mistake.
+    assert_eq!(env.gsctl(&["apply", &b, &b]).status, 2);
+}
+
+#[test]
 fn apply_rejects_unknown_areas() {
     let env = TestEnv::new();
     let good =

@@ -371,6 +371,7 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
     let mut unchanged = 0;
     let mut listed: Vec<(String, Option<String>, String)> = Vec::new();
     let mut all_file_areas: Vec<String> = Vec::new();
+    let mut seen: BTreeMap<(String, Option<String>, String), &Path> = BTreeMap::new();
     check_areas(opts.areas.iter().map(String::as_str), "--area: ")?;
 
     for file in opts.files {
@@ -424,6 +425,14 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
                 continue;
             };
             for (key, j) in keys {
+                // One write per key: two files setting it is a mistake, not a merge.
+                let id = (schema.to_string(), path.map(str::to_string), key.clone());
+                if let Some(first) = seen.get(&id) {
+                    let msg = format!("{instance} {key} is set in both {} and {}", first.display(), file.display());
+                    problem(key, &Error::Usage(msg));
+                    continue;
+                }
+                seen.insert(id, file);
                 listed.push((schema.to_string(), path.map(str::to_string), key.clone()));
                 if !opts.areas.is_empty() && !opts.areas.iter().any(|a| a == area_of(schema, key)) {
                     continue;
