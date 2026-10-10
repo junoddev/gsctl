@@ -2,6 +2,23 @@
 name = "gsctl"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.92"
+description = "Search, inspect and change GNOME settings (GSettings/dconf) with JSON output, validation and undo, built for AI agents"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/junoddev/gsctl"
+homepage = "https://github.com/junoddev/gsctl"
+readme = "README.md"
+keywords = ["gnome", "gsettings", "dconf", "cli", "desktop"]
+categories = ["command-line-utilities", "config"]
+include = [
+    "/src/**",
+    "/tests/**",
+    "/skills/**",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/SECURITY.md",
+    "/LICENSE-*",
+]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -16,3 +33,8 @@ thiserror = "2.0.21"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
