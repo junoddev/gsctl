@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use gio::prelude::*;
 use serde_json::{Value, json};
 
-use crate::commands::{self, Action, Tags, WriteOpts, write};
+use crate::commands::{self, Action, BatchItem};
 use crate::error::{Error, Result};
 use crate::index::Index;
 use crate::journal;
@@ -292,22 +292,32 @@ pub fn set_enabled(index: &Index, uuid: &str, enable: bool, dry_run: bool) -> Re
 
     let op = if enable { "ext-enable" } else { "ext-disable" };
     let batch = journal::new_id(Some(op));
-    let opts = WriteOpts { path: None, dry_run, yes: true };
-    let tags = Tags { reverts: None, batch: Some(&batch) };
-    let mut writes = Vec::new();
-    for (key, new, old) in [(ENABLED, &enabled, &state.enabled), (DISABLED, &disabled, &state.disabled)] {
-        if new != old && entry.schema.has_key(key) {
-            writes.push(write(entry, key, &opts, op, Action::Set(new.to_variant()), tags)?);
-        }
-    }
+    let items: Vec<BatchItem> = [(ENABLED, &enabled, &state.enabled), (DISABLED, &disabled, &state.disabled)]
+        .into_iter()
+        .filter(|(key, new, old)| new != old && entry.schema.has_key(key))
+        .map(|(key, new, _)| BatchItem {
+            entry,
+            key: key.to_string(),
+            path: None,
+            action: Action::Set(new.to_variant()),
+            yes: true,
+            reverts: None,
+        })
+        .collect();
+    let writes = commands::write_batch(items, op, Some(&batch), dry_run)?;
+    // What GNOME Shell will do with the new lists: `disable-user-extensions`
+    // can keep an enabled extension off.
+    let mode_json = state.mode_json();
+    let after = ShellState { enabled, disabled, ..state };
     Ok(json!({
         "uuid": uuid,
-        "enabled": enable,
-        "session_mode": state.mode_json(),
+        "enabled": after.enabled_by(uuid).is_some(),
+        "enabled_by": after.enabled_by(uuid),
+        "session_mode": mode_json,
         "changed": !writes.is_empty(),
         "dry_run": dry_run,
         "batch": if dry_run || writes.is_empty() { Value::Null } else { batch.into() },
-        "user_extensions_disabled": state.user_disabled,
+        "user_extensions_disabled": after.user_disabled,
         "writes": writes,
     }))
 }

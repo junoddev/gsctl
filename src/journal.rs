@@ -78,11 +78,34 @@ pub fn record(change: &Change) -> std::io::Result<String> {
 /// All entries, oldest first. A missing journal is empty; unparseable lines
 /// (e.g. a torn write) are skipped.
 pub fn read() -> std::io::Result<Vec<Value>> {
-    match fs::read_to_string(path()) {
-        Ok(text) => Ok(text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
-        Err(e) => Err(e),
+    read_counting_skipped().map(|(entries, _)| entries)
+}
+
+/// [`read`], plus how many non-empty lines were skipped as corrupt (not a
+/// JSON object).
+pub fn read_counting_skipped() -> std::io::Result<(Vec<Value>, usize)> {
+    let text = match fs::read_to_string(path()) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((vec![], 0)),
+        Err(e) => return Err(e),
+    };
+    let (mut entries, mut skipped) = (Vec::new(), 0);
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        match serde_json::from_str::<Value>(line) {
+            Ok(v) if v.is_object() => entries.push(v),
+            _ => skipped += 1,
+        }
     }
+    Ok((entries, skipped))
+}
+
+/// Whether the file at `path` is non-empty and its last byte isn't a newline
+/// (a torn write), so the next entry must start on a fresh line.
+fn ends_mid_line(path: &std::path::Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = fs::File::open(path) else { return false };
+    let mut last = [0u8];
+    f.seek(SeekFrom::End(-1)).is_ok() && f.read_exact(&mut last).is_ok() && last[0] != b'\n'
 }
 
 fn append(entry: &Value) -> std::io::Result<()> {
@@ -91,8 +114,10 @@ fn append(entry: &Value) -> std::io::Result<()> {
         fs::create_dir_all(dir)?;
     }
     let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
+    // After a torn write, start a new line so this entry isn't lost with it.
+    let start = if ends_mid_line(&path) { "\n" } else { "" };
     // One write per line keeps concurrent appends from interleaving.
-    f.write_all(format!("{entry}\n").as_bytes())
+    f.write_all(format!("{start}{entry}\n").as_bytes())
 }
 
 /// Format Unix seconds as `YYYY-MM-DDTHH:MM:SSZ`.

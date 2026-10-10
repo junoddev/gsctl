@@ -173,6 +173,7 @@ fn set_and_get_every_type() {
         ("choice-s", "right", json!("right")),
         ("maybe-s", "hello", json!("hello")),
         ("maybe-s", "null", json!(null)),
+        ("maybe-s", "nothing", json!("nothing")),
         ("bytes-ay", "[104, 105, 0]", json!([104, 105, 0])),
         ("big-x", "-5000000000", json!(-5000000000i64)),
         ("big-t", "18446744073709551615", json!(u64::MAX)),
@@ -221,6 +222,32 @@ fn set_rejects_bad_values_with_actionable_errors() {
     // Nothing was written.
     assert_eq!(env.gsctl(&["get", S, "count-i"]).ok()["value"], 10);
     assert!(journal(&env).is_empty());
+}
+
+#[test]
+fn set_rejects_nan_and_infinity() {
+    let env = TestEnv::new();
+    let profile = "/org/gnome/Ptyxis/Profiles/p1/";
+    let cases: &[&[&str]] = &[
+        &["set", S, "ratio-d", "nan"],
+        &["set", S, "ratio-d", "-nan"],
+        &["set", S, "ratio-d", "inf"],
+        &["set", S, "triple-sdb", "('q', nan, false)"],
+        &["set", S, "triple-sdb", "('q', -inf, false)"],
+        &["set", S, "dict-asv", "{'a': <nan>}"],
+        &["set", S, "dict-asv", "{'a': <[<inf>]>}"],
+        &["set", "org.gnome.Ptyxis.Profile", "opacity", "inf", "--path", profile],
+        &["set", "org.gnome.Ptyxis.Profile", "opacity", "1e999", "--path", profile],
+        &["set", "org.gnome.Ptyxis.Profile", "opacity", "nan", "--path", profile, "--dry-run"],
+    ];
+    for args in cases {
+        let r = env.gsctl(args);
+        assert_eq!(r.status, 4, "{args:?}: {}{}", r.stdout, r.stderr);
+        assert_eq!(r.error()["error"]["code"], "invalid_value", "{args:?}");
+    }
+    assert!(journal(&env).is_empty());
+    // Finite values still work.
+    env.gsctl(&["set", "org.gnome.Ptyxis.Profile", "opacity", "0.5", "--path", profile]).ok();
 }
 
 #[test]
@@ -539,6 +566,79 @@ fn revert_last_walks_back_like_an_undo_stack() {
     // Redo is reverting the revert by id.
     env.gsctl(&["revert", &id_of(&undo)]).ok();
     assert_eq!(env.gsctl(&["get", S, "count-i"]).ok()["value"], 1);
+}
+
+#[test]
+fn revert_last_after_a_redo_undoes_the_redone_change() {
+    let env = TestEnv::new();
+    let a = env.gsctl(&["set", S, "count-i", "1"]).ok();
+    let b = env.gsctl(&["set", S, "name-s", "B"]).ok();
+    let undo = env.gsctl(&["revert", "last"]).ok();
+    assert_eq!(undo["reverts"], id_of(&b));
+    env.gsctl(&["revert", &id_of(&undo)]).ok(); // redo B
+    assert_eq!(env.gsctl(&["get", S, "name-s"]).ok()["value"], "B");
+
+    // B is in effect again, so it is the newest change to undo; A stays.
+    let again = env.gsctl(&["revert", "last"]).ok();
+    assert_eq!(again["reverts"], id_of(&b), "{again}");
+    assert_eq!(env.gsctl(&["get", S, "name-s"]).ok()["is_default"], true);
+    assert_eq!(env.gsctl(&["get", S, "count-i"]).ok()["value"], 1);
+
+    // History marks B undone by the newest revert, which is in effect.
+    let h = env.gsctl(&["history"]).ok();
+    let entry_b = h["entries"].as_array().unwrap().iter().find(|e| e["id"] == id_of(&b).as_str()).unwrap().clone();
+    assert_eq!(entry_b["reverted_by"], again["journal_id"]);
+
+    let last = env.gsctl(&["revert", "last"]).ok();
+    assert_eq!(last["reverts"], id_of(&a));
+    assert_eq!(env.gsctl(&["revert", "last"]).status, 3, "nothing left to undo");
+}
+
+#[test]
+fn a_torn_journal_line_does_not_swallow_the_next_entry() {
+    let env = TestEnv::new();
+    env.gsctl(&["set", S, "count-i", "20"]).ok();
+    let mut text = std::fs::read_to_string(env.journal()).unwrap();
+    text.push_str("42\n{\"id\": \"torn-wri"); // a non-object line, and a line cut short
+    std::fs::write(env.journal(), text).unwrap();
+
+    let b = env.gsctl(&["set", S, "name-s", "B"]).ok();
+    let h = env.gsctl(&["history"]).ok();
+    assert_eq!(h["total"], 2, "{h}");
+    assert_eq!(h["entries"][0]["id"], id_of(&b).as_str());
+    assert_eq!(h["skipped_lines"], 2);
+    assert_eq!(env.gsctl(&["revert", "last"]).ok()["reverts"], id_of(&b).as_str());
+}
+
+/// Rewrite the newest journal entry with `edit`.
+fn tamper_last_entry(env: &TestEnv, edit: impl Fn(&mut Value)) {
+    let mut entries = journal(env);
+    edit(entries.last_mut().unwrap());
+    let text: String = entries.iter().map(|e| format!("{e}\n")).collect();
+    std::fs::write(env.journal(), text).unwrap();
+}
+
+#[test]
+fn revert_guards_do_not_trust_the_journal_op() {
+    let env = TestEnv::new();
+    let screensaver = "org.gnome.desktop.screensaver";
+    env.gsctl(&["set", screensaver, "lock-enabled", "false", "--yes"]).ok();
+    tamper_last_entry(&env, |e| e["op"] = "ext-enable".into());
+    let r = env.gsctl(&["revert", "last"]);
+    assert_eq!(r.status, 6, "{}{}", r.stdout, r.stderr);
+    assert_eq!(env.gsctl(&["get", screensaver, "lock-enabled"]).ok()["value"], false);
+
+    // A wholesale change of enabled-extensions is not a one-uuid edit, whatever the op says.
+    let env = TestEnv::new();
+    env.gsctl(&["set", "org.gnome.shell", "enabled-extensions", r#"["a@x","b@x","c@x"]"#, "--yes"]).ok();
+    tamper_last_entry(&env, |e| e["op"] = "ext-disable".into());
+    assert_eq!(env.gsctl(&["revert", "last"]).status, 6);
+    env.gsctl(&["revert", "last", "--yes"]).ok();
+
+    // A one-uuid edit is targeted by its values, even when made by `set`.
+    env.gsctl(&["set", "org.gnome.shell", "enabled-extensions", r#"["a@x"]"#, "--yes"]).ok();
+    env.gsctl(&["revert", "last"]).ok();
+    assert_eq!(env.gsctl(&["get", "org.gnome.shell", "enabled-extensions"]).ok()["is_default"], true);
 }
 
 #[test]

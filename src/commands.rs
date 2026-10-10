@@ -1,5 +1,7 @@
 //! Command implementations. Each returns the JSON document printed on stdout.
 
+use std::collections::HashMap;
+
 use gio::SettingsSchemaKey;
 use gio::prelude::*;
 use serde_json::{Value, json};
@@ -204,6 +206,7 @@ pub fn reset(index: &Index, schema: &str, key: &str, opts: &WriteOpts) -> Result
     write(entry, key, opts, "reset", Action::Reset, Tags::default())
 }
 
+#[derive(Clone)]
 pub(crate) enum Action {
     Set(glib::Variant),
     Reset,
@@ -255,6 +258,12 @@ pub(crate) fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action
     {
         return Err(Error::Guarded { schema, key: key.to_string(), reason: reason.to_string() });
     }
+    // Test hook (debug builds only): make the write of "<schema> <key>" fail,
+    // to exercise batch rollback.
+    #[cfg(debug_assertions)]
+    if std::env::var("GSCTL_TEST_FAIL_WRITE").is_ok_and(|v| v == format!("{schema} {key}")) {
+        return Err(Error::Internal(format!("injected write failure for {schema} {key} (GSCTL_TEST_FAIL_WRITE)")));
+    }
 
     if is_reset {
         settings.reset(key);
@@ -293,20 +302,82 @@ pub(crate) fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action
     Ok(out)
 }
 
+/// One write of a batch, for [`write_batch`].
+pub(crate) struct BatchItem<'a> {
+    pub entry: &'a Entry,
+    pub key: String,
+    pub path: Option<String>,
+    pub action: Action,
+    pub yes: bool,
+    /// For a revert, the journal id it undoes.
+    pub reverts: Option<String>,
+}
+
+/// Write `items` in order, journaled with `op` in `batch`. Callers check
+/// everything first (values, writability, guards, conflicts); if a write
+/// still fails, the writes already made are undone, newest first, and
+/// journaled as `rollback` entries that revert them (batch
+/// `rollback-<batch>`). The error then carries the batch id and what was
+/// rolled back.
+pub(crate) fn write_batch(items: Vec<BatchItem>, op: &str, batch: Option<&str>, dry_run: bool) -> Result<Vec<Value>> {
+    let mut done: Vec<(Value, &BatchItem, Option<glib::Variant>)> = Vec::new();
+    for item in &items {
+        let before = if dry_run { None } else { item.entry.settings(item.path.as_deref())?.user_value(&item.key) };
+        let opts = WriteOpts { path: item.path.as_deref(), dry_run, yes: item.yes };
+        let tags = Tags { reverts: item.reverts.as_deref(), batch };
+        match write(item.entry, &item.key, &opts, op, item.action.clone(), tags) {
+            Ok(out) => done.push((out, item, before)),
+            Err(e) if done.is_empty() => return Err(e),
+            Err(e) => return Err(roll_back(e, done, batch.unwrap_or_default())),
+        }
+    }
+    Ok(done.into_iter().map(|(out, _, _)| out).collect())
+}
+
+fn roll_back(error: Error, done: Vec<(Value, &BatchItem, Option<glib::Variant>)>, batch: &str) -> Error {
+    let rollback_batch = format!("rollback-{batch}");
+    let (mut rolled_back, mut not_rolled_back) = (Vec::new(), Vec::new());
+    for (out, item, before) in done.into_iter().rev() {
+        let opts = WriteOpts { path: item.path.as_deref(), dry_run: false, yes: true };
+        let tags = Tags { reverts: out["journal_id"].as_str(), batch: Some(&rollback_batch) };
+        let action = before.map_or(Action::Reset, Action::Set);
+        let summary = json!({
+            "schema": out["schema"], "path": out["path"], "key": out["key"], "journal_id": out["journal_id"],
+        });
+        match write(item.entry, &item.key, &opts, "rollback", action, tags) {
+            Ok(_) => rolled_back.push(summary),
+            Err(e) => {
+                let mut s = summary;
+                s["error"] = e.to_string().into();
+                not_rolled_back.push(s);
+            }
+        }
+    }
+    let message = if not_rolled_back.is_empty() {
+        format!("{error} (batch {batch}: the {} earlier write(s) were rolled back)", rolled_back.len())
+    } else {
+        format!(
+            "{error} (batch {batch}: {} earlier write(s) rolled back, {} could not be; see not_rolled_back)",
+            rolled_back.len(),
+            not_rolled_back.len()
+        )
+    };
+    let details = json!({ "batch": batch, "rolled_back": rolled_back, "not_rolled_back": not_rolled_back });
+    Error::BatchWrite { error: Box::new(error), message, details }
+}
+
 pub fn history(limit: usize, prefixes: &[String], key: Option<&str>) -> Result<Value> {
-    let entries = read_journal()?;
-    let reverted_by: Vec<(String, String)> = entries
-        .iter()
-        .filter_map(|e| Some((e["reverts"].as_str()?.to_string(), e["id"].as_str()?.to_string())))
-        .collect();
+    let (entries, skipped) = journal::read_counting_skipped()
+        .map_err(|e| Error::Internal(format!("cannot read {}: {e}", journal::path().display())))?;
+    let undone = undone_by(&entries);
     let matching: Vec<Value> = entries
-        .into_iter()
+        .iter()
         .rev()
         .filter(|e| matches_prefix(e["schema"].as_str().unwrap_or_default(), prefixes))
         .filter(|e| key.is_none_or(|k| e["key"] == k))
-        .map(|mut e| {
-            let id = e["id"].as_str().unwrap_or_default().to_string();
-            if let Some((_, by)) = reverted_by.iter().rev().find(|(r, _)| *r == id) {
+        .map(|e| {
+            let mut e = e.clone();
+            if let Some(by) = e["id"].as_str().and_then(|id| undone.get(id)) {
                 e["reverted_by"] = by.clone().into();
             }
             e
@@ -314,35 +385,78 @@ pub fn history(limit: usize, prefixes: &[String], key: Option<&str>) -> Result<V
         .collect();
     let total = matching.len();
     let shown: Vec<Value> = matching.into_iter().take(limit).collect();
-    Ok(json!({ "journal": journal::path(), "total": total, "entries": shown }))
+    let mut out = json!({ "journal": journal::path(), "total": total, "entries": shown });
+    if skipped > 0 {
+        // Corrupt lines (a torn write, or edited by hand) are left out.
+        out["skipped_lines"] = skipped.into();
+    }
+    Ok(out)
+}
+
+/// Journal entries whose change is undone, mapped to the revert that undid
+/// it. An entry is undone if a revert of it is not itself undone, so after
+/// undo + redo the entry counts as in effect again. Reverts are always newer
+/// than what they revert, so one pass from the newest entry settles it; a
+/// tampered journal pointing at a newer entry just counts as "not undone".
+fn undone_by(entries: &[Value]) -> HashMap<String, String> {
+    let mut reverts_of: HashMap<&str, Vec<&str>> = HashMap::new();
+    for e in entries {
+        if let (Some(target), Some(id)) = (e["reverts"].as_str(), e["id"].as_str()) {
+            reverts_of.entry(target).or_default().push(id);
+        }
+    }
+    let mut undone: HashMap<String, String> = HashMap::new();
+    for e in entries.iter().rev() {
+        let Some(id) = e["id"].as_str() else { continue };
+        let by = reverts_of.get(id).and_then(|rs| rs.iter().rev().find(|r| !undone.contains_key(**r)));
+        if let Some(by) = by {
+            undone.insert(id.to_string(), by.to_string());
+        }
+    }
+    undone
 }
 
 /// Undo journal entry `id`, every entry of batch `id` (an `apply`), or `last`:
-/// the newest change that isn't a revert and hasn't been reverted (with its
-/// whole batch), so repeated `revert last` walks back like an undo stack. To
-/// redo, revert the revert by id. Each key goes back to
-/// its previous value, or is reset if it was at its default. Refuses if a key
-/// has changed since, unless `force`; for a batch, every key is checked before
-/// any is written.
+/// the newest change that isn't a revert and is still in effect (with the
+/// rest of its batch), so repeated `revert last` walks back like an undo
+/// stack. To redo, revert the revert by id; the redone change is then in
+/// effect again, so the next `revert last` undoes it once more. A batch counts
+/// as undone only when all its entries are, and only its entries still in
+/// effect are reverted. Each key goes back to its previous value, or is reset
+/// if it was at its default.
+///
+/// Every key is checked before any is written: it must still hold the
+/// entry's value (else a conflict, unless `force`), be writable, and guarded
+/// keys need `yes`. If a write still fails, the writes already made are
+/// rolled back.
 pub fn revert(index: &Index, id: &str, force: bool, dry_run: bool, yes: bool) -> Result<Value> {
     let entries = read_journal()?;
+    let undone = undone_by(&entries);
+    let in_effect = |e: &&Value| !e["id"].as_str().is_some_and(|i| undone.contains_key(i));
     let batch_of = |e: &Value| e["batch"].as_str().map(str::to_string);
-    let undone: Vec<&str> = entries.iter().filter_map(|e| e["reverts"].as_str()).collect();
-    let is_undone = |e: &Value| match batch_of(e) {
-        Some(b) => entries.iter().any(|x| x["batch"] == b.as_str() && undone.contains(&x["id"].as_str().unwrap_or(""))),
-        None => undone.contains(&e["id"].as_str().unwrap_or("")),
-    };
+    let rest_of_batch =
+        |b: &str| -> Vec<&Value> { entries.iter().filter(|x| x["batch"] == b).filter(in_effect).collect() };
     let target: Vec<&Value> = match id {
-        "last" => match entries.iter().rev().find(|e| e["reverts"].is_null() && !is_undone(e)) {
+        "last" => match entries.iter().rev().filter(in_effect).find(|e| e["reverts"].is_null()) {
             Some(e) => match batch_of(e) {
-                Some(b) => entries.iter().filter(|x| x["batch"] == b.as_str()).collect(),
+                Some(b) => rest_of_batch(&b),
                 None => vec![e],
             },
             None => vec![],
         },
         _ => match entries.iter().find(|e| e["id"] == id) {
             Some(e) => vec![e],
-            None => entries.iter().filter(|e| e["batch"] == id).collect(),
+            None if entries.iter().any(|e| e["batch"] == id) => {
+                let rest = rest_of_batch(id);
+                if rest.is_empty() {
+                    return Err(Error::Conflict {
+                        id: id.to_string(),
+                        message: format!("batch {id} has already been reverted; see `gsctl history`"),
+                    });
+                }
+                rest
+            }
+            None => vec![],
         },
     };
     if target.is_empty() {
@@ -355,22 +469,23 @@ pub fn revert(index: &Index, id: &str, force: bool, dry_run: bool, yes: bool) ->
 
     // Undo in reverse order, after checking every entry.
     let prepared = target.iter().rev().map(|e| prepare_revert(index, e, force)).collect::<Result<Vec<_>>>()?;
-    if !dry_run && !yes {
-        for p in prepared.iter().filter(|p| !p.targeted) {
-            if let Some(reason) = guard::check(&p.entry.id(), &p.key) {
-                return Err(Error::Guarded { schema: p.entry.id(), key: p.key.clone(), reason: reason.to_string() });
+    if !dry_run {
+        doctor::require_writable()?;
+        if !yes {
+            for p in prepared.iter().filter(|p| !p.targeted) {
+                if let Some(reason) = guard::check(&p.item.entry.id(), &p.item.key) {
+                    let (schema, key) = (p.item.entry.id(), p.item.key.clone());
+                    return Err(Error::Guarded { schema, key, reason: reason.to_string() });
+                }
             }
         }
     }
 
     let run_batch = batch.as_ref().map(|b| format!("revert-{b}"));
-    let mut results = Vec::new();
-    for p in prepared {
-        let opts = WriteOpts { path: p.path.as_deref(), dry_run, yes: yes || p.targeted };
-        let tags = Tags { reverts: Some(&p.id), batch: run_batch.as_deref() };
-        let mut out = write(p.entry, &p.key, &opts, "revert", p.action, tags)?;
-        out["reverts"] = p.id.clone().into();
-        results.push(out);
+    let items: Vec<BatchItem> = prepared.into_iter().map(|p| BatchItem { yes: yes || p.targeted, ..p.item }).collect();
+    let mut results = write_batch(items, "revert", run_batch.as_deref(), dry_run)?;
+    for (out, e) in results.iter_mut().zip(target.iter().rev()) {
+        out["reverts"] = e["id"].clone();
     }
     match batch {
         None => Ok(results.pop().unwrap()),
@@ -379,14 +494,28 @@ pub fn revert(index: &Index, id: &str, force: bool, dry_run: bool, yes: bool) ->
 }
 
 struct PreparedRevert<'a> {
-    entry: &'a Entry,
-    key: String,
-    path: Option<String>,
-    action: Action,
-    id: String,
-    /// Undoes a targeted edit (`ext enable`/`disable` changes one uuid), which
-    /// didn't need `--yes`, so its revert doesn't either.
+    item: BatchItem<'a>,
+    /// Undoes a targeted edit: one uuid added to or removed from
+    /// `enabled-extensions`/`disabled-extensions`, as `ext enable`/`disable`
+    /// make without `--yes`, so the revert doesn't need it either. Judged
+    /// from the values, never from the journal's `op`, which could be forged.
     targeted: bool,
+}
+
+const SHELL_SCHEMA: &str = "org.gnome.shell";
+const EXTENSION_LISTS: [&str; 2] = ["enabled-extensions", "disabled-extensions"];
+
+/// `a` and `b` are string lists that differ by exactly one item added or
+/// removed, order otherwise kept.
+fn one_item_apart(a: &glib::Variant, b: &glib::Variant) -> bool {
+    let (Some(a), Some(b)) = (a.get::<Vec<String>>(), b.get::<Vec<String>>()) else { return false };
+    let (long, short) = if a.len() > b.len() { (a, b) } else { (b, a) };
+    long.len() == short.len() + 1
+        && (0..long.len()).any(|i| {
+            let mut l = long.clone();
+            l.remove(i);
+            l == short
+        })
 }
 
 fn prepare_revert<'a>(index: &'a Index, e: &Value, force: bool) -> Result<PreparedRevert<'a>> {
@@ -399,13 +528,17 @@ fn prepare_revert<'a>(index: &'a Index, e: &Value, force: bool) -> Result<Prepar
     let k = entry.key(key)?;
     let ty = k.value_type();
     let parse = |text: &str| {
-        glib::Variant::parse(Some(&ty), text).map_err(|err| {
+        convert::parse_finite(&ty, text).map_err(|err| {
             Error::Internal(format!("journal entry {id}: cannot parse {text:?} as {}: {err}", ty.as_str()))
         })
     };
 
     let expected = parse(field("new_gvariant")?)?;
-    let current = entry.settings(path)?.value(key);
+    let settings = entry.settings(path)?;
+    let current = settings.value(key);
+    if !settings.is_writable(key) {
+        return Err(Error::NotWritable { schema: schema.to_string(), key: key.to_string() });
+    }
     if current != expected && !force {
         return Err(Error::Conflict {
             id: id.to_string(),
@@ -431,15 +564,22 @@ fn prepare_revert<'a>(index: &'a Index, e: &Value, force: bool) -> Result<Prepar
             Action::Set(v)
         }
     };
-    let targeted = e["op"].as_str().is_some_and(|op| op.starts_with("ext-"));
-    Ok(PreparedRevert {
+    let targeted = path.is_none() && schema == SHELL_SCHEMA && EXTENSION_LISTS.contains(&key) && {
+        let after = match &action {
+            Action::Set(v) => v.clone(),
+            Action::Reset => settings.default_value(key).unwrap_or_else(|| k.default_value()),
+        };
+        one_item_apart(&current, &after)
+    };
+    let item = BatchItem {
         entry,
         key: key.to_string(),
         path: path.map(str::to_string),
         action,
-        id: id.to_string(),
-        targeted,
-    })
+        yes: false,
+        reverts: Some(id.to_string()),
+    };
+    Ok(PreparedRevert { item, targeted })
 }
 
 fn read_journal() -> Result<Vec<Value>> {

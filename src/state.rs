@@ -25,7 +25,7 @@ use gio::prelude::*;
 use glib::Variant;
 use serde_json::{Map, Value, json};
 
-use crate::commands::{Action, Tags, WriteOpts, range_error, write};
+use crate::commands::{Action, BatchItem, range_error, write_batch};
 use crate::convert::{from_json, to_json};
 use crate::error::{Error, Result};
 use crate::index::{Entry, Index};
@@ -150,6 +150,32 @@ pub fn area_names() -> Vec<&'static str> {
     AREAS.iter().map(|a| a.name).chain([OTHER]).collect()
 }
 
+/// A usage error unless every name in `areas` is a known area.
+fn check_areas<'a>(areas: impl IntoIterator<Item = &'a str>, context: &str) -> Result<()> {
+    let names = area_names();
+    for a in areas {
+        if !names.contains(&a) {
+            return Err(Error::Usage(format!("{context}unknown area {a:?}; areas are: {}", names.join(", "))));
+        }
+    }
+    Ok(())
+}
+
+/// A state file's `area`: a name, a list of names, or absent.
+fn file_areas(file: &Path, area: &Value) -> Result<Vec<String>> {
+    let bad = || Error::Usage(format!("{}: \"area\" must be an area name or a list of them", file.display()));
+    let areas: Vec<String> = match area {
+        Value::Null => vec![],
+        Value::String(a) => vec![a.clone()],
+        Value::Array(list) => {
+            list.iter().map(|a| a.as_str().map(str::to_string).ok_or_else(bad)).collect::<Result<_>>()?
+        }
+        _ => return Err(bad()),
+    };
+    check_areas(areas.iter().map(String::as_str), &format!("{}: ", file.display()))?;
+    Ok(areas)
+}
+
 /// Why `schema key` looks like machine or app state rather than a preference,
 /// if it does. State is left out of exports unless asked for.
 pub fn state_reason(schema: &str, key: &str) -> Option<&'static str> {
@@ -205,7 +231,7 @@ fn decode(j: &Value, ty: &glib::VariantTy) -> std::result::Result<Variant, Strin
         && let Some(text) = map.get(GVARIANT)
     {
         let text = text.as_str().ok_or("$gvariant must be a string")?;
-        return Variant::parse(Some(ty), text).map_err(|e| format!("invalid GVariant text {text:?}: {e}"));
+        return crate::convert::parse_finite(ty, text).map_err(|e| format!("invalid GVariant text {text:?}: {e}"));
     }
     from_json(j, ty)
 }
@@ -238,12 +264,7 @@ pub struct ExportOpts<'a> {
 }
 
 pub fn export(index: &Index, opts: &ExportOpts) -> Result<Value> {
-    let names = area_names();
-    for a in opts.areas {
-        if !names.contains(&a.as_str()) {
-            return Err(Error::Usage(format!("unknown area {a:?}; areas are: {}", names.join(", "))));
-        }
-    }
+    check_areas(opts.areas.iter().map(String::as_str), "")?;
     let wanted = |area: &str| opts.areas.is_empty() || opts.areas.iter().any(|a| a == area);
 
     let mut items = Vec::new();
@@ -349,7 +370,9 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
     let mut planned: Vec<Planned> = Vec::new();
     let mut unchanged = 0;
     let mut listed: Vec<(String, Option<String>, String)> = Vec::new();
-    let mut file_areas: Vec<String> = Vec::new();
+    let mut all_file_areas: Vec<String> = Vec::new();
+    let mut seen: BTreeMap<(String, Option<String>, String), &Path> = BTreeMap::new();
+    check_areas(opts.areas.iter().map(String::as_str), "--area: ")?;
 
     for file in opts.files {
         let text =
@@ -362,19 +385,15 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
         let Some(settings) = doc["settings"].as_object() else {
             return Err(Error::Usage(format!("{} has no \"settings\" object", file.display())));
         };
+        let areas = file_areas(file, &doc["area"])?;
         if opts.prune {
-            let areas: Vec<&str> = match &doc["area"] {
-                Value::String(a) => vec![a.as_str()],
-                Value::Array(list) => list.iter().filter_map(Value::as_str).collect(),
-                _ => vec![],
-            };
             if areas.is_empty() {
                 return Err(Error::Usage(format!(
                     "{} names no \"area\", so --prune can't tell which keys it owns",
                     file.display()
                 )));
             }
-            file_areas.extend(areas.into_iter().map(str::to_string));
+            all_file_areas.extend(areas);
         }
         for (instance, keys) in settings {
             let (schema, path) = match instance.split_once(':') {
@@ -406,6 +425,14 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
                 continue;
             };
             for (key, j) in keys {
+                // One write per key: two files setting it is a mistake, not a merge.
+                let id = (schema.to_string(), path.map(str::to_string), key.clone());
+                if let Some(first) = seen.get(&id) {
+                    let msg = format!("{instance} {key} is set in both {} and {}", first.display(), file.display());
+                    problem(key, &Error::Usage(msg));
+                    continue;
+                }
+                seen.insert(id, file);
                 listed.push((schema.to_string(), path.map(str::to_string), key.clone()));
                 if !opts.areas.is_empty() && !opts.areas.iter().any(|a| a == area_of(schema, key)) {
                     continue;
@@ -450,7 +477,7 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
         }
     }
 
-    let pruned = if opts.prune { plan_prune(index, opts, &file_areas, &listed, &mut problems)? } else { vec![] };
+    let pruned = if opts.prune { plan_prune(index, opts, &all_file_areas, &listed, &mut problems)? } else { vec![] };
 
     if !problems.is_empty() {
         let exit = problems[0]["exit_code"].as_i64().unwrap_or(4) as i32;
@@ -495,12 +522,21 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
     }
 
     let batch = journal::new_id(Some("apply"));
+    let items = planned
+        .iter()
+        .chain(&pruned)
+        .map(|p| BatchItem {
+            entry: p.entry,
+            key: p.key.clone(),
+            path: p.path.clone(),
+            action: if p.reset { Action::Reset } else { Action::Set(p.value.clone()) },
+            yes: true,
+            reverts: None,
+        })
+        .collect();
+    let outs = write_batch(items, "apply", Some(&batch), false)?;
     let (mut changes, mut resets) = (Vec::new(), Vec::new());
-    for p in planned.iter().chain(&pruned) {
-        let opts = WriteOpts { path: p.path.as_deref(), dry_run: false, yes: true };
-        let tags = Tags { reverts: None, batch: Some(&batch) };
-        let action = if p.reset { Action::Reset } else { Action::Set(p.value.clone()) };
-        let out = write(p.entry, &p.key, &opts, "apply", action, tags)?;
+    for (p, out) in planned.iter().chain(&pruned).zip(outs) {
         let mut c = change_json(p);
         c["journal_id"] = out["journal_id"].clone();
         if p.reset { resets.push(c) } else { changes.push(c) }
