@@ -158,6 +158,49 @@ fn keys_add_needs_yes() {
     env.gsctl(&["keys", "remove", "Term"]).ok();
 }
 
+// --- files ---------------------------------------------------------------------
+
+fn mode(p: &std::path::Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p).unwrap().permissions().mode() & 0o777
+}
+
+#[test]
+fn journal_is_private_and_not_followed_through_a_symlink() {
+    let env = TestEnv::new();
+    env.gsctl(&["set", "org.gsctl.test", "count-i", "5"]).ok();
+    assert_eq!(mode(&env.journal()), 0o600);
+
+    let env = TestEnv::new();
+    let target = env.path("elsewhere.txt");
+    std::fs::write(&target, "").unwrap();
+    std::fs::create_dir_all(env.journal().parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&target, env.journal()).unwrap();
+    let out = env.gsctl(&["set", "org.gsctl.test", "count-i", "5"]).ok();
+    assert!(out["journal_error"].is_string(), "{out}");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "");
+}
+
+#[test]
+fn export_out_writes_private_files_and_refuses_symlinks() {
+    let env = TestEnv::new();
+    env.gsctl(&["set", "org.gsctl.test", "count-i", "5"]).ok();
+    let dir = env.path("out");
+    env.gsctl(&["export", "--out", dir.to_str().unwrap()]).ok();
+    assert_eq!(mode(&dir.join("other.json")), 0o600);
+    let leftovers: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(leftovers, ["other.json"], "no temp files left behind");
+
+    let target = env.path("victim.txt");
+    std::fs::write(&target, "keep").unwrap();
+    std::fs::remove_file(dir.join("other.json")).unwrap();
+    std::os::unix::fs::symlink(&target, dir.join("other.json")).unwrap();
+    let r = env.gsctl(&["export", "--out", dir.to_str().unwrap()]);
+    assert_ne!(r.status, 0, "{}", r.stdout);
+    assert!(r.error()["error"]["message"].as_str().unwrap().contains("symlink"), "{}", r.stderr);
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+}
+
 // --- apply --prune -------------------------------------------------------------
 
 #[test]

@@ -2,7 +2,7 @@
 //! the final path component, no blocking on FIFOs, and a size cap.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
@@ -48,6 +48,30 @@ pub fn read_small(path: &Path) -> Option<String> {
 /// symlink at `path`.
 pub fn open_append_private(path: &Path) -> io::Result<File> {
     OpenOptions::new().create(true).append(true).mode(0o600).custom_flags(O_NOFOLLOW).open(path)
+}
+
+/// Replace `path` with `contents`, mode 0600: write a temp file in the same
+/// directory, then rename it over `path`, so a reader never sees half a file.
+/// Refuses if `path` is a symlink or not a regular file.
+pub fn replace_private(path: &Path, contents: &[u8]) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_symlink() => {
+            return Err(io::Error::other("refusing to write through a symlink"));
+        }
+        Ok(m) if !m.is_file() => return Err(io::Error::other("not a regular file")),
+        _ => {}
+    }
+    let name = path.file_name().ok_or_else(|| io::Error::other("no file name"))?.to_string_lossy();
+    let tmp = path.with_file_name(format!(".{name}.tmp-{}", std::process::id()));
+    let write = || -> io::Result<()> {
+        let mut f = OpenOptions::new().write(true).create_new(true).mode(0o600).custom_flags(O_NOFOLLOW).open(&tmp)?;
+        f.write_all(contents)?;
+        f.sync_all()?;
+        fs::rename(&tmp, path)
+    };
+    write().inspect_err(|_| {
+        let _ = fs::remove_file(&tmp);
+    })
 }
 
 #[cfg(test)]

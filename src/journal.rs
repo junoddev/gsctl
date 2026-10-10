@@ -2,8 +2,9 @@
 //! `$XDG_STATE_HOME/gsctl/journal.ndjson` (default `~/.local/state/...`).
 //! `history` and `revert` read it.
 
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::Write;
+use std::os::unix::fs::DirBuilderExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -88,9 +89,10 @@ pub fn read() -> std::io::Result<Vec<Value>> {
 fn append(entry: &Value) -> std::io::Result<()> {
     let path = path();
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
+        fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
     }
-    let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
+    // Private (0600), and never through a symlink planted at the path.
+    let mut f = crate::fsutil::open_append_private(&path)?;
     // One write per line keeps concurrent appends from interleaving.
     f.write_all(format!("{entry}\n").as_bytes())
 }

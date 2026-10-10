@@ -297,7 +297,8 @@ pub fn export(index: &Index, opts: &ExportOpts) -> Result<Value> {
                 let path = dir.join(format!("{area}.json"));
                 let doc = document(Value::from(*area), items.iter().copied());
                 let text = serde_json::to_string_pretty(&doc).unwrap() + "\n";
-                fs::write(&path, text).map_err(|e| Error::Internal(format!("cannot write {}: {e}", path.display())))?;
+                crate::fsutil::replace_private(&path, text.as_bytes())
+                    .map_err(|e| Error::Internal(format!("cannot write {}: {e}", path.display())))?;
                 files.push(json!({ "area": area, "path": path, "keys": items.len() }));
             }
             Ok(json!({ "files": files, "skipped_state": skipped }))
