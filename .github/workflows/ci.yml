@@ -48,3 +48,32 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked
+
+  distros:
+    name: test on ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Fedora
+            image: fedora:latest
+            install: >-
+              dnf install -y --setopt=install_weak_deps=False gcc pkgconf-pkg-config
+              glib2-devel dbus-daemon dbus-tools dconf util-linux findutils
+          - name: Arch
+            image: archlinux:latest
+            install: >-
+              pacman -Syu --noconfirm --needed base-devel glib2 glib2-devel dbus dconf util-linux
+    steps:
+      - name: Install GLib and test dependencies
+        run: ${{ matrix.install }}
+      - uses: actions/checkout@v6
+      # As a normal user: some tests check file ownership and permissions.
+      - name: Test as an unprivileged user
+        run: |
+          useradd -m tester
+          chown -R tester "$GITHUB_WORKSPACE"
+          su tester -c 'curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
+            && . ~/.cargo/env && cd "'"$GITHUB_WORKSPACE"'" && cargo test --locked'
