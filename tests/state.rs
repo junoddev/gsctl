@@ -225,6 +225,34 @@ fn apply_area_filter() {
 }
 
 #[test]
+fn apply_rejects_unknown_areas() {
+    let env = TestEnv::new();
+    let good =
+        write_json(&env, "good.json", &json!({"gsctl": 1, "area": "other", "settings": { S: { "count-i": 50 } }}));
+    let r = env.gsctl(&["apply", &good, "--area", "powr"]);
+    assert_eq!(r.status, 2, "{}{}", r.stdout, r.stderr);
+    assert!(r.error()["error"]["message"].as_str().unwrap().contains("powr"));
+    assert_eq!(env.gsctl(&["apply", &good, "--area", "powr", "--dry-run"]).status, 2);
+
+    for area in [json!("intreface"), json!(["other", "nope"]), json!(5), json!(["other", 1])] {
+        let file =
+            write_json(&env, "bad-area.json", &json!({"gsctl": 1, "area": area, "settings": { S: { "count-i": 50 } }}));
+        let r = env.gsctl(&["apply", &file]);
+        assert_eq!(r.status, 2, "area {area}: {}{}", r.stdout, r.stderr);
+        assert!(r.error()["error"]["message"].as_str().unwrap().contains("bad-area.json"), "{}", r.stderr);
+    }
+    assert_eq!(journal_len(&env), 0);
+
+    // No area, or a list of valid ones, is fine.
+    let file = write_json(
+        &env,
+        "list.json",
+        &json!({"gsctl": 1, "area": ["other", "power"], "settings": { S: { "count-i": 50 } }}),
+    );
+    env.gsctl(&["apply", &file, "--dry-run"]).ok();
+}
+
+#[test]
 fn revert_undoes_a_whole_apply() {
     let env = TestEnv::new();
     env.gsctl(&["set", S, "name-s", "Mine"]).ok();
