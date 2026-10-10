@@ -173,6 +173,7 @@ fn set_and_get_every_type() {
         ("choice-s", "right", json!("right")),
         ("maybe-s", "hello", json!("hello")),
         ("maybe-s", "null", json!(null)),
+        ("maybe-s", "nothing", json!("nothing")),
         ("bytes-ay", "[104, 105, 0]", json!([104, 105, 0])),
         ("big-x", "-5000000000", json!(-5000000000i64)),
         ("big-t", "18446744073709551615", json!(u64::MAX)),

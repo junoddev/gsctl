@@ -227,8 +227,9 @@ pub fn parse_finite(ty: &VariantTy, text: &str) -> Result<Variant, String> {
 ///
 /// Tried in order: JSON (`true`, `42`, `"text"`, `["a","b"]`), GVariant text
 /// syntax (`@as []`, `('xkb', 'us')`, `uint32 5`), and, for string types, the
-/// raw text itself, so `prefer-dark` works without quotes. NaN and infinity
-/// are rejected.
+/// raw text itself, so `prefer-dark` works without quotes. For an `ms` key,
+/// a bare `nothing` is the string "nothing": no value takes JSON `null` (or
+/// typed `@ms nothing`). NaN and infinity are rejected.
 pub fn parse_input(raw: &str, ty: &VariantTy) -> Result<Variant, String> {
     let v = parse_any(raw, ty)?;
     check_finite(&v)?;
@@ -243,6 +244,11 @@ fn parse_any(raw: &str, ty: &VariantTy) -> Result<Variant, String> {
         },
         Err(_) => None,
     };
+    // GVariant's bare `nothing` keyword would make an `ms` key null; for
+    // string keys it is text like any other word. No value is JSON `null`.
+    if ty.as_str() == "ms" && raw.trim() == "nothing" {
+        return Ok(Variant::from_some(&raw.into()));
+    }
     let gvariant_err = match Variant::parse(Some(ty), raw) {
         Ok(v) => return Ok(v),
         // GLib prefixes a character range ("0-3:unknown keyword").
@@ -441,6 +447,13 @@ mod tests {
         assert_eq!(p("true", "s").unwrap(), "'true'");
         assert_eq!(p("null", "ms").unwrap(), "@ms nothing");
         assert_eq!(p("label", "ms").unwrap(), "@ms 'label'");
+        // Only JSON null (or typed `@ms nothing`) means no value; the bare
+        // word is a string, as it is for an `s` key.
+        assert_eq!(p("nothing", "ms").unwrap(), "@ms 'nothing'");
+        assert_eq!(p(" nothing ", "ms").unwrap(), "@ms ' nothing '");
+        assert_eq!(p("nothing", "s").unwrap(), "'nothing'");
+        assert_eq!(p("@ms nothing", "ms").unwrap(), "@ms nothing");
+        assert_eq!(p("just 'x'", "ms").unwrap(), "@ms 'x'");
         assert!(p("maybe", "b").is_err());
         assert_eq!(p(r#"["a",1]"#, "as").unwrap_err(), "item 1: expected string, got integer");
     }
