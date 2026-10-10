@@ -4,7 +4,7 @@ A command-line interface to GNOME's settings (GSettings/dconf) built for AI
 agents, and usable by people. You can search for the key that controls
 something, see its type and allowed values, change it with validation and
 `--dry-run`, and undo anything from a journal. Output is JSON for agents, or
-plain text for people.
+plain text for people. Website: https://junoddev.github.io/gsctl/
 
     $ gsctl search animations --limit 2 --format text
       org.gnome.desktop.interface              enable-animations  true  # Enable Animations
@@ -277,6 +277,10 @@ Pattern rules are best-effort (`sh -c` or a full path gets around them). See
 how to report a vulnerability.
 
 ## Agent skill
+
+To have an agent set gsctl up for you, tell it:
+
+    Read https://junoddev.github.io/gsctl/agents.md and set up gsctl on this machine.
 
 `skills/gnome-settings/SKILL.md` is an agent skill that teaches the loop:
 search → schema → `set --dry-run` → `set` → `get` to verify → `export` and

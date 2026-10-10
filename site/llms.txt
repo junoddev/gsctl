@@ -1,0 +1,17 @@
+# gsctl
+
+> A command-line interface to GNOME's settings (GSettings/dconf) built for AI agents: search for the key that controls something, see its type and allowed values, change it with validation and --dry-run, and undo anything from a journal. JSON output by default.
+
+If a user asked you to set up gsctl, read and follow the setup instructions: https://junoddev.github.io/gsctl/agents.md
+
+## Docs
+
+- [Setup instructions for agents](https://junoddev.github.io/gsctl/agents.md): install, verify, install the skill, add a permission gate
+- [Agent skill](https://junoddev.github.io/gsctl/skill/SKILL.md): how to use gsctl to find and change GNOME settings safely
+- [README](https://github.com/junoddev/gsctl/blob/main/README.md): full reference for people
+- [Security](https://github.com/junoddev/gsctl/blob/main/SECURITY.md): threat model and the recommended agent setup
+
+## Optional
+
+- [Releases](https://github.com/junoddev/gsctl/releases): prebuilt binaries for x86_64 and aarch64 Linux
+- [crates.io](https://crates.io/crates/gsctl)

@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gsctl — GNOME settings for agents and people</title>
+<meta name="description" content="A command-line interface to GNOME's settings (GSettings/dconf) built for AI agents: search, validate, dry-run and undo. JSON output by default.">
+<meta property="og:title" content="gsctl — GNOME settings for agents and people">
+<meta property="og:description" content="Search, validate and undo GNOME settings. JSON for agents, text for people.">
+<meta property="og:url" content="https://junoddev.github.io/gsctl/">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#0d0e0c">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230d0e0c'/%3E%3Ctext x='5' y='22' font-family='monospace' font-size='16' font-weight='700' fill='%23a6e3a1'%3E%24_%3C/text%3E%3C/svg%3E">
+<link rel="alternate" type="text/markdown" href="agents.md" title="Setup instructions for AI agents">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="manhead">
+  <span>GSCTL(1)</span>
+  <nav aria-label="Sections">
+    <a href="#install">install</a>
+    <a href="#agents">agents</a>
+    <a href="#examples">examples</a>
+    <a href="#safety">safety</a>
+    <a href="https://github.com/junoddev/gsctl">github</a>
+  </nav>
+  <span class="hide-sm">GSCTL(1)</span>
+</header>
+
+<main>
+
+<section class="hero">
+  <p class="dim">NAME</p>
+  <h1>gsctl <span class="dim">—</span> GNOME settings,<br>searchable and undoable.</h1>
+  <p class="lede">A command-line interface to GSettings/dconf, built for AI agents and usable by people.
+  Find the key that controls something, see its type and allowed values, change it with
+  validation and <code>--dry-run</code>, and undo anything from a journal.
+  JSON for agents, text for people.</p>
+
+  <div class="tabs" id="install">
+    <div class="tablist" role="tablist" aria-label="Install">
+      <button role="tab" aria-selected="true" aria-controls="t-agent" id="b-agent">agent</button>
+      <button role="tab" aria-selected="false" aria-controls="t-curl" id="b-curl" tabindex="-1">curl</button>
+      <button role="tab" aria-selected="false" aria-controls="t-cargo" id="b-cargo" tabindex="-1">cargo</button>
+      <button role="tab" aria-selected="false" aria-controls="t-source" id="b-source" tabindex="-1">source</button>
+    </div>
+    <div class="tabpanel" role="tabpanel" id="t-agent" aria-labelledby="b-agent">
+      <p class="note"># paste this into Claude Code, Codex, Cursor or any coding agent</p>
+      <div class="copyable"><pre><code>Read https://junoddev.github.io/gsctl/agents.md and set up gsctl on this machine.</code></pre><button class="copy" type="button">copy</button></div>
+      <p class="note"># it installs gsctl, checks the session, adds the skill and offers a permission gate. <a href="agents.md">read the file</a></p>
+    </div>
+    <div class="tabpanel" role="tabpanel" id="t-curl" aria-labelledby="b-curl" hidden>
+      <p class="note"># prebuilt x86_64 / aarch64 Linux binary into ~/.local/bin (glibc 2.35+)</p>
+      <div class="copyable"><pre><code>curl --proto '=https' --tlsv1.2 -LsSf https://github.com/junoddev/gsctl/releases/latest/download/gsctl-installer.sh | sh</code></pre><button class="copy" type="button">copy</button></div>
+      <p class="note"># or grab an archive with the man page and completions from <a href="https://github.com/junoddev/gsctl/releases">releases</a></p>
+    </div>
+    <div class="tabpanel" role="tabpanel" id="t-cargo" aria-labelledby="b-cargo" hidden>
+      <p class="note"># Rust 1.92+ and GLib headers (libglib2.0-dev / glib2-devel / glib2)</p>
+      <div class="copyable"><pre><code>cargo install gsctl --locked</code></pre><button class="copy" type="button">copy</button></div>
+      <p class="note"># <a href="https://crates.io/crates/gsctl">crates.io/crates/gsctl</a></p>
+    </div>
+    <div class="tabpanel" role="tabpanel" id="t-source" aria-labelledby="b-source" hidden>
+      <div class="copyable"><pre><code>git clone https://github.com/junoddev/gsctl
+cd gsctl &amp;&amp; cargo install --path . --locked</code></pre><button class="copy" type="button">copy</button></div>
+    </div>
+  </div>
+  <p class="version dim">v{{VERSION}} · MIT OR Apache-2.0 · Linux + GNOME</p>
+</section>
+
+<section class="man">
+  <h2>SYNOPSIS</h2>
+  <div class="body">
+<pre class="synopsis"><b>gsctl search</b> <i>words…</i>              <span class="dim"># ranked search over keys, summaries, descriptions</span>
+<b>gsctl schema</b> <i>schema</i> [<i>key</i>]         <span class="dim"># type, default, value, allowed values</span>
+<b>gsctl get</b>|<b>set</b>|<b>reset</b> <i>schema key</i> [<i>value</i>] [--dry-run] [--yes]
+<b>gsctl changed</b>                      <span class="dim"># only what differs from defaults</span>
+<b>gsctl history</b> | <b>revert</b> <i>id</i>|last     <span class="dim"># every write is journaled</span>
+<b>gsctl keys</b> find|list|conflicts|add|remove
+<b>gsctl ext</b> list|info|enable|disable
+<b>gsctl export</b> | <b>apply</b> [--prune]       <span class="dim"># per-area JSON for your dotfiles</span>
+<b>gsctl watch</b> | <b>doctor</b> | <b>man</b> | <b>completions</b> <i>shell</i></pre>
+  </div>
+</section>
+
+<section class="man">
+  <h2>DESCRIPTION</h2>
+  <div class="body">
+    <p>On a desktop like <a href="https://github.com/basecamp/omarchy">Omarchy</a>, every piece reads
+    a plain-text file in <code>~/.config</code>, so an agent can read the setup, edit a line and reload.
+    GNOME can't work that way: Shell, Mutter and the apps keep their settings in one binary dconf
+    database, described by thousands of typed keys, with no file to read or edit.</p>
+    <p><code>gsettings</code> has the metadata but no search, no JSON, no error an agent can act on and no
+    record of what changed. <code>dconf dump</code> is thousands of lines of preferences mixed with machine
+    state. gsctl gives GNOME what Omarchy gets from plain files: a settings surface an agent can read,
+    search and change safely. It's a proxy over dconf, not a copy, so Settings, <code>gsettings</code> and
+    gsctl always agree.</p>
+    <ul class="facts">
+      <li><b>search</b> — ranked over schema ids, key names, summaries, descriptions and installed extensions</li>
+      <li><b>validate</b> — type and range checks before anything is written; writes are read back</li>
+      <li><b>dry-run</b> — every write command shows exactly what it would change</li>
+      <li><b>undo</b> — a journal of old values; <code>revert last</code> walks back like an undo stack</li>
+      <li><b>shortcuts</b> — all five keybinding schemas, custom bindings and extension shortcuts in one place</li>
+      <li><b>extensions</b> — their settings included, enabled state by GNOME Shell's own rules</li>
+    </ul>
+  </div>
+</section>
+
+<section class="man" id="examples">
+  <h2>EXAMPLES</h2>
+  <div class="body">
+<pre class="term"><span class="p">$</span> gsctl search "screen timeout" --limit 1 --format text
+<span class="o">  org.gnome.desktop.session  idle-delay  0  # Time before session is considered idle  (seconds of inactivity before the screen blanks; 0 = never)
+149 matches (showing 1 of 149; use --limit for more)</span>
+
+<span class="p">$</span> gsctl set org.gnome.desktop.interface color-scheme sideways --dry-run
+<span class="e">error:</span><span class="o"> "sideways" is not one of the allowed values: default, prefer-dark, prefer-light</span>
+<span class="h">hint:</span><span class="o"> see `gsctl schema org.gnome.desktop.interface color-scheme`</span>
+
+<span class="p">$</span> gsctl set org.gnome.desktop.interface color-scheme prefer-dark --format text
+<span class="o">set org.gnome.desktop.interface color-scheme: 'default' -&gt; 'prefer-dark'</span>
+
+<span class="p">$</span> gsctl revert last --format text
+<span class="o">reverted org.gnome.desktop.interface color-scheme: 'prefer-dark' -&gt; 'default'</span>
+
+<span class="p">$</span> gsctl keys add Terminal '&lt;Super&gt;Return' ptyxis --dry-run --format text
+<span class="o">would add 'Terminal' at /org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/: &lt;Super&gt;Return runs 'ptyxis'  </span><span class="w">(guarded: needs --yes)</span></pre>
+  </div>
+</section>
+
+<section class="man" id="agents">
+  <h2>AGENTS</h2>
+  <div class="body">
+    <p>JSON on stdout by default. When stderr isn't a terminal, errors are JSON too, with a stable
+    <code>code</code>, an <code>exit_code</code>, a <code>hint</code>, and for bad values the allowed
+    <code>range</code>: enough to fix the call without another lookup.</p>
+<pre class="term json"><span class="p">$</span> gsctl set org.gnome.desktop.interface color-scheme sideways --dry-run
+<span class="o">{"error":{"code":"invalid_value","exit_code":4,
+  "message":"\"sideways\" is not one of the allowed values: default, prefer-dark, prefer-light",
+  "schema":"org.gnome.desktop.interface","key":"color-scheme","type":"s",
+  "range":{"kind":"enum","choices":["default","prefer-dark","prefer-light"]},
+  "hint":"see `gsctl schema org.gnome.desktop.interface color-scheme`; ..."}}</span></pre>
+    <table class="codes">
+      <caption>EXIT STATUS</caption>
+      <tr><td>0</td><td>ok</td><td>4</td><td>invalid value</td></tr>
+      <tr><td>1</td><td>internal error</td><td>5</td><td>not writable or no session</td></tr>
+      <tr><td>2</td><td>usage</td><td>6</td><td>guarded key, needs <code>--yes</code></td></tr>
+      <tr><td>3</td><td>not found</td><td>7</td><td>conflict</td></tr>
+    </table>
+    <p>Machine-readable docs, served as plain files:</p>
+    <ul class="files">
+      <li><a href="agents.md">agents.md</a> <span class="dim">— setup instructions: install, verify, add the skill, add a permission gate</span></li>
+      <li><a href="skill/SKILL.md">skill/SKILL.md</a> <span class="dim">— the operating manual: search → schema → dry-run → set → verify</span></li>
+      <li><a href="llms.txt">llms.txt</a> <span class="dim">— index for crawlers and agents</span></li>
+    </ul>
+  </div>
+</section>
+
+<section class="man" id="safety">
+  <h2>SAFETY</h2>
+  <div class="body">
+    <p>gsctl trusts you. It makes changes visible (<code>--dry-run</code>, the journal) and undoable
+    (<code>revert</code>), and asks for <code>--yes</code> only on keys that can lock you out, cut off remote
+    access or make GNOME run a command. Secrets are redacted in output. It isn't a sandbox:
+    anything running as you can call <code>dconf write</code>, so for an agent the real gate is the
+    agent's own permissions. In Claude Code:</p>
+    <div class="copyable"><pre><code>{
+  "permissions": {
+    "ask": ["Bash(gsctl * --yes)", "Bash(gsctl * --yes *)"],
+    "deny": [
+      "Bash(dconf write *)", "Bash(dconf load *)", "Bash(dconf reset *)",
+      "Bash(gsettings set *)", "Bash(gsettings reset *)", "Bash(gsettings reset-recursively *)"
+    ]
+  }
+}</code></pre><button class="copy" type="button">copy</button></div>
+    <p>Every <code>--yes</code> asks you first, and writes go through gsctl, where they're validated and
+    journaled. See <a href="https://github.com/junoddev/gsctl/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+  </div>
+</section>
+
+<section class="man">
+  <h2>SEE ALSO</h2>
+  <div class="body">
+    <p><a href="https://github.com/junoddev/gsctl">github.com/junoddev/gsctl</a>,
+    <a href="https://github.com/junoddev/gsctl/releases">releases</a>,
+    <a href="https://crates.io/crates/gsctl">crates.io</a>,
+    <a href="https://github.com/junoddev/gsctl/blob/main/CHANGELOG.md">CHANGELOG</a>,
+    <span class="dim">gsettings(1), dconf(1)</span></p>
+  </div>
+</section>
+
+</main>
+
+<footer class="manhead">
+  <span>gsctl {{VERSION}}</span>
+  <span class="hide-sm">MIT OR Apache-2.0</span>
+  <span>GSCTL(1)</span>
+</footer>
+
+<script src="site.js" defer></script>
+</body>
+</html>
