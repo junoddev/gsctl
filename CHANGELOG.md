@@ -10,6 +10,25 @@ change to them is listed here under that release.
 
 ## [Unreleased]
 
+### Fixed
+
+- `ext list` and `doctor` treat a plain GNOME session (`XDG_CURRENT_DESKTOP=GNOME`,
+  as on Fedora and Arch) as the `user` session mode. gsctl used to pick the
+  only installed mode file instead, which is `classic` wherever GNOME Classic
+  is installed, and reported Classic's extensions as enabled.
+- Extension schemas whose id isn't spelled `org.gnome.shell.extensions.*`,
+  such as GSConnect's `org.gnome.Shell.Extensions.GSConnect`, or which use
+  their own id at a path under `/org/gnome/shell/extensions/`, are now found
+  by `search`, `schema` and `get`.
+- `apply` follows a symlinked state file when it points to a regular file you
+  own, so dotfiles linked into place by GNU Stow work again. Symlinks to
+  other users' files, FIFOs and oversized files are still refused.
+
+### Added
+
+- `doctor` warns when GNOME's desktop schemas (`gsettings-desktop-schemas`)
+  aren't installed, instead of reporting that everything is fine.
+
 ## [0.1.0] - 2026-10-10
 
 First public release.

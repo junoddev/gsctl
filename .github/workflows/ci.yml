@@ -19,7 +19,7 @@ jobs:
     name: fmt, clippy, test
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # GLib headers to build; dbus-run-session, dconf-service, the dconf CLI
       # and glib-compile-schemas for the hermetic tests (tests/common/mod.rs).
       - name: Install GLib and test dependencies
@@ -39,7 +39,7 @@ jobs:
     name: test on MSRV (1.92)
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install GLib and test dependencies
         run: |
           sudo apt-get update
