@@ -254,7 +254,7 @@ pub fn search(index: &Index, query: &str, opts: &SearchOpts) -> Result<Value> {
             let matched: Vec<String> = m.as_ref().map(|m| m.matched.clone()).unwrap_or_default();
             hit["matched"] = json!(matched);
             hit["matched_words"] = matched.len().into();
-            if matched.len() < n_words {
+            if matched.len() < n_words && alias.is_none() {
                 hit["partial"] = true.into();
             }
             if let Some(note) = alias {
@@ -747,9 +747,12 @@ pub fn with_suggestions(e: Error) -> Error {
 /// `(did_you_mean, elsewhere)`: close names, and for a key, the other
 /// schemas that have a key of that exact name.
 fn suggest(index: &Index, e: &Error) -> (Vec<String>, Vec<String>) {
+    // Search hits fill in only when no name is close, and only those
+    // matching every word.
     let top_hits = |query: &str, prefixes: &[String]| -> Vec<Value> {
         let opts = SearchOpts { limit: 5, prefixes, all: false };
-        search(index, query, &opts).ok().and_then(|v| v["results"].as_array().cloned()).unwrap_or_default()
+        let hits = search(index, query, &opts).ok().and_then(|v| v["results"].as_array().cloned());
+        hits.unwrap_or_default().into_iter().filter(|h| h.get("partial").is_none()).take(3).collect()
     };
     let add = |out: &mut Vec<String>, s: &str| {
         if !out.iter().any(|o| o == s) && out.len() < 5 {
@@ -760,7 +763,7 @@ fn suggest(index: &Index, e: &Error) -> (Vec<String>, Vec<String>) {
         Error::SchemaNotFound(id) => {
             let ids: Vec<String> = index.entries().iter().map(Entry::id).collect();
             let mut out = search::closest(id, ids.iter().map(String::as_str), 3);
-            for hit in top_hits(id, &[]) {
+            for hit in if out.is_empty() { top_hits(id, &[]) } else { vec![] } {
                 if let Some(s) = hit["schema"].as_str() {
                     add(&mut out, s);
                 }
@@ -771,7 +774,7 @@ fn suggest(index: &Index, e: &Error) -> (Vec<String>, Vec<String>) {
             let Ok(entry) = index.get(schema) else { return (vec![], vec![]) };
             let keys = entry.keys();
             let mut out = search::closest(key, keys.iter().map(String::as_str), 3);
-            for hit in top_hits(key, std::slice::from_ref(schema)) {
+            for hit in if out.is_empty() { top_hits(key, std::slice::from_ref(schema)) } else { vec![] } {
                 if let Some(k) = hit["key"].as_str()
                     && hit["schema"] == schema.as_str()
                 {
@@ -794,7 +797,9 @@ fn suggest(index: &Index, e: &Error) -> (Vec<String>, Vec<String>) {
             for x in &exts {
                 let name = x.metadata["name"].as_str().unwrap_or_default().to_lowercase();
                 let stem = x.uuid.split('@').next().unwrap_or_default();
-                if name.contains(&lower) || (!stem.is_empty() && lower.contains(stem)) {
+                // Ubuntu Dock's settings are dash-to-dock's.
+                let by_schema = lower.len() >= 3 && x.schemas(index).iter().any(|s| s.to_lowercase().contains(&lower));
+                if name.contains(&lower) || (!stem.is_empty() && lower.contains(stem)) || by_schema {
                     add(&mut out, &x.uuid);
                 }
             }

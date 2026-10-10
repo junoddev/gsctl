@@ -123,6 +123,7 @@ fn aliases_are_added_on_top_and_marked() {
     assert_eq!(hit["via"], "alias");
     assert!(hit["note"].as_str().unwrap().contains("0 = never"));
     assert_eq!(hit["matched"], json!([]));
+    assert!(hit.get("partial").is_none(), "alias hits aren't partial matches");
     // Other matches are still there.
     assert!(keys(&out).contains(&format!("{S} size-u")), "{out}");
 

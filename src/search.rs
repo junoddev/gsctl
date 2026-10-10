@@ -317,7 +317,7 @@ pub fn edit_distance(a: &str, b: &str) -> usize {
 /// or containing it (or contained in it) as a whole. Closest first.
 pub fn closest<'a>(input: &str, candidates: impl IntoIterator<Item = &'a str>, n: usize) -> Vec<String> {
     let lower = input.to_lowercase();
-    let max = (lower.chars().count() / 3).clamp(1, 4);
+    let max = (lower.chars().count() / 6).clamp(1, 3);
     let mut scored: Vec<(usize, &str)> = candidates
         .into_iter()
         .filter_map(|c| {
