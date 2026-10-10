@@ -162,7 +162,7 @@ pub(crate) fn range_error(key: &SettingsSchemaKey, value: &glib::Variant) -> Opt
     Some(match range["kind"].as_str() {
         Some("enum") => format!("{shown} is not one of the allowed values: {}", list(&range["choices"])),
         Some("flags") => format!("{shown} contains values outside the allowed flags: {}", list(&range["flags"])),
-        Some("range") => format!("{shown} is outside the allowed range {}..={}", range["min"], range["max"]),
+        Some("range") => format!("{shown} is outside the allowed range {}–{}", range["min"], range["max"]),
         _ => format!("{shown} is not allowed"),
     })
 }

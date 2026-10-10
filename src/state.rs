@@ -261,19 +261,36 @@ pub struct ExportOpts<'a> {
     pub areas: &'a [String],
     pub out_dir: Option<&'a Path>,
     pub include_state: bool,
+    /// Also export the `remote` area, which is left out unless named.
+    pub include_remote: bool,
 }
+
+/// Areas `export` leaves out unless named with `--area` (or
+/// `--include-remote`): `remote` would carry RDP `enable` into dotfiles and
+/// switch remote access on wherever they're applied.
+pub const OPT_IN_AREAS: &[&str] = &["remote"];
 
 pub fn export(index: &Index, opts: &ExportOpts) -> Result<Value> {
     check_areas(opts.areas.iter().map(String::as_str), "")?;
-    let wanted = |area: &str| opts.areas.is_empty() || opts.areas.iter().any(|a| a == area);
+    let wanted = |area: &str| {
+        if opts.areas.is_empty() {
+            !OPT_IN_AREAS.contains(&area) || opts.include_remote
+        } else {
+            opts.areas.iter().any(|a| a == area)
+        }
+    };
 
     let mut items = Vec::new();
     let mut skipped = Vec::new();
+    let mut left_out: BTreeMap<&str, usize> = BTreeMap::new();
     let mut add = |entry: &Entry, path: Option<&str>, items: &mut Vec<Item>| -> Result<()> {
         let id = entry.id();
         for (key, value) in customised(entry, path)? {
             let area = area_of(&id, &key);
             if !wanted(area) {
+                if opts.areas.is_empty() && (opts.include_state || state_reason(&id, &key).is_none()) {
+                    *left_out.entry(area).or_default() += 1;
+                }
                 continue;
             }
             // Never exported, even with --include-state.
@@ -306,6 +323,13 @@ pub fn export(index: &Index, opts: &ExportOpts) -> Result<Value> {
     for item in &items {
         by_area.entry(item.area).or_default().push(item);
     }
+    // Customised keys in opt-in areas that were left out, by area.
+    let skipped_areas = |mut doc: Value| {
+        if !left_out.is_empty() {
+            doc["skipped_areas"] = json!(left_out);
+        }
+        doc
+    };
 
     match opts.out_dir {
         None => {
@@ -314,7 +338,7 @@ pub fn export(index: &Index, opts: &ExportOpts) -> Result<Value> {
             if !skipped.is_empty() {
                 doc["skipped_state"] = skipped.into();
             }
-            Ok(doc)
+            Ok(skipped_areas(doc))
         }
         Some(dir) => {
             fs::create_dir_all(dir).map_err(|e| Error::Internal(format!("cannot create {}: {e}", dir.display())))?;
@@ -327,7 +351,7 @@ pub fn export(index: &Index, opts: &ExportOpts) -> Result<Value> {
                     .map_err(|e| Error::Internal(format!("cannot write {}: {e}", path.display())))?;
                 files.push(json!({ "area": area, "path": path, "keys": items.len() }));
             }
-            Ok(json!({ "files": files, "skipped_state": skipped }))
+            Ok(skipped_areas(json!({ "files": files, "skipped_state": skipped })))
         }
     }
 }
@@ -367,6 +391,29 @@ struct Planned<'a> {
     reset: bool,
 }
 
+/// The files to apply: each argument, or for a directory (such as the one
+/// `export --out` wrote) every `*.json` in it, in name order.
+fn state_files(args: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for arg in args {
+        if !arg.is_dir() {
+            files.push(arg.clone());
+            continue;
+        }
+        let entries = fs::read_dir(arg).map_err(|e| Error::Usage(format!("cannot read {}: {e}", arg.display())))?;
+        let mut found: Vec<PathBuf> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "json") && p.is_file())
+            .collect();
+        if found.is_empty() {
+            return Err(Error::Usage(format!("no .json files in {}", arg.display())));
+        }
+        found.sort();
+        files.extend(found);
+    }
+    Ok(files)
+}
+
 /// Apply state files: validate everything, then write only the keys that
 /// differ. Nothing is written if any value is invalid or a guarded key would
 /// change without `--yes`. With `prune`, customised keys in the files' areas
@@ -380,7 +427,7 @@ pub fn apply(index: &Index, opts: &ApplyOpts) -> Result<Value> {
     let mut seen: BTreeMap<(String, Option<String>, String), &Path> = BTreeMap::new();
     check_areas(opts.areas.iter().map(String::as_str), "--area: ")?;
 
-    for file in opts.files {
+    for file in &state_files(opts.files)? {
         let text =
             fs::read_to_string(file).map_err(|e| Error::Usage(format!("cannot read {}: {e}", file.display())))?;
         let doc: Value = serde_json::from_str(&text)

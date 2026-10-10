@@ -204,7 +204,7 @@ fn set_rejects_bad_values_with_actionable_errors() {
     assert_eq!(e["input"], "maybe");
 
     let e = bad("count-i", "101");
-    assert!(e["message"].as_str().unwrap().contains("outside the allowed range 0..=100"), "{e}");
+    assert!(e["message"].as_str().unwrap().contains("outside the allowed range 0–100"), "{e}");
     assert_eq!(e["range"]["max"], 100);
 
     let e = bad("mode", "sideways");
@@ -444,9 +444,9 @@ fn negative_numbers_are_values_not_flags() {
 fn text_format() {
     let env = TestEnv::new();
     let r = env.gsctl(&["--format", "text", "get", S, "list-as"]);
-    assert_eq!(r.stdout, "[\"one\",\"two\"]\n");
+    assert_eq!(r.stdout, "['one', 'two']\n");
     let r = env.gsctl(&["set", S, "count-i", "12", "--format", "text"]);
-    assert_eq!(r.stdout, "org.gsctl.test count-i changed: 10 -> 12\n");
+    assert_eq!(r.stdout, "set org.gsctl.test count-i: 10 -> 12\n");
 }
 
 // --- history / revert -------------------------------------------------------

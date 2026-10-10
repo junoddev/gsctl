@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Stand-ins for guard and security tests (tests/guards.rs). -->
 <schemalist>
-  <!-- A guarded fixed schema, like gnome-remote-desktop's. -->
+  <!-- A guarded fixed schema, like gnome-remote-desktop's. Export also
+       leaves its area out by default. -->
   <schema id="org.gnome.desktop.remote-desktop.rdp" path="/org/gnome/desktop/remote-desktop/rdp/">
     <key name="enable" type="b">
       <default>false</default>

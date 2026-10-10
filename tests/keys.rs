@@ -336,7 +336,7 @@ fn text_output_names_bindings_for_people() {
     assert!(!msg.contains(CUSTOM), "{msg}");
 
     let r = env.gsctl(&["--format", "text", "keys", "list"]);
-    assert!(r.stdout.contains(r#"custom "Terminal": ptyxis"#), "{}", r.stdout);
+    assert!(r.stdout.contains("custom 'Terminal': ptyxis"), "{}", r.stdout);
     assert!(r.stdout.contains("demo@gsctl.test take-window"), "{}", r.stdout);
     assert!(r.stdout.contains("(extension off)"), "{}", r.stdout);
 }
