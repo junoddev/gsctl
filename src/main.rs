@@ -23,9 +23,9 @@ use serde_json::Value;
 /// Output is JSON on stdout and errors are JSON on stderr, for agents. For
 /// people: `--format text`, or `export GSCTL_FORMAT=text`; errors are plain
 /// text when stderr is a terminal. Exit codes: 0 ok, 1 internal error,
-/// 2 usage, 3 schema or key not found, 4 invalid value, 5 not writable,
-/// 6 guarded key (needs --yes), 7 conflict (revert of a key changed since;
-/// needs --force).
+/// 2 usage, 3 schema or key not found, 4 invalid value, 5 not writable or
+/// no session, 6 guarded key (needs --yes), 7 conflict (revert of a key
+/// changed since; needs --force).
 #[derive(Parser)]
 #[command(
     name = "gsctl",
