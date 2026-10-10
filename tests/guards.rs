@@ -232,6 +232,47 @@ fn journal_is_private_and_not_followed_through_a_symlink() {
 }
 
 #[test]
+fn journal_and_its_dir_are_tightened_if_loose() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = TestEnv::new();
+    let journal = env.journal();
+    let dir = journal.parent().unwrap();
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(&journal, "").unwrap();
+    std::fs::set_permissions(&journal, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    env.gsctl(&["set", "org.gsctl.test", "count-i", "5"]).ok();
+    assert_eq!(mode(&journal), 0o600);
+    assert_eq!(mode(dir), 0o700);
+}
+
+#[test]
+fn apply_reads_only_small_regular_files() {
+    let env = TestEnv::new();
+    let doc = json!({"gsctl": 1, "area": "other", "settings": {"org.gsctl.test": {"count-i": 42}}});
+    let real = write_json(&env, "real.json", &doc);
+    let link = env.path("link.json");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let r = env.gsctl(&["apply", link.to_str().unwrap(), "--dry-run"]);
+    assert_eq!(r.status, 2, "{}", r.stderr);
+    assert!(r.error()["error"]["message"].as_str().unwrap().contains("symlink"), "{}", r.stderr);
+
+    // A FIFO must not block.
+    let fifo = env.path("fifo.json");
+    assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    let r = env.gsctl(&["apply", fifo.to_str().unwrap(), "--dry-run"]);
+    assert_eq!(r.status, 2, "{}", r.stderr);
+
+    let big = env.path("big.json");
+    std::fs::write(&big, format!("{{\"gsctl\": 1, \"pad\": \"{}\"}}", "x".repeat(2 << 20))).unwrap();
+    let r = env.gsctl(&["apply", big.to_str().unwrap(), "--dry-run"]);
+    assert_eq!(r.status, 2, "{}", r.stderr);
+    assert!(r.error()["error"]["message"].as_str().unwrap().contains("larger"), "{}", r.stderr);
+
+    env.gsctl(&["apply", &real, "--dry-run"]).ok();
+}
+
+#[test]
 fn export_out_writes_private_files_and_refuses_symlinks() {
     let env = TestEnv::new();
     env.gsctl(&["set", "org.gsctl.test", "count-i", "5"]).ok();
