@@ -22,12 +22,38 @@ Results depend on what's installed: that second hit is Ubuntu's dock. An
 agent, whose stderr isn't a terminal, gets the same error as JSON:
 `{"error":{"code":"invalid_value","exit_code":4,"message":...,"range":{...},"hint":...}}`.
 
-## Quick start
+## Install
 
-Install (needs Rust via `rustup`, `pkg-config` and GLib's headers,
-`libglib2.0-dev` on Debian and Ubuntu):
+Prebuilt binaries for x86_64 and aarch64 Linux (glibc 2.35 or newer, so
+Ubuntu 22.04, Debian 12, Fedora 36 and later) are on
+[GitHub Releases](https://github.com/junoddev/gsctl/releases). The shell
+installer puts `gsctl` in `~/.local/bin`:
 
+    curl --proto '=https' --tlsv1.2 -LsSf https://github.com/junoddev/gsctl/releases/latest/download/gsctl-installer.sh | sh
+
+Each archive also has the man page and bash, zsh and fish completions.
+
+With Rust, from crates.io:
+
+    cargo install gsctl --locked
+
+Or from source:
+
+    git clone https://github.com/junoddev/gsctl
+    cd gsctl
     cargo install --path . --locked
+
+Building needs Rust 1.92 or newer, so install it with
+[rustup](https://rustup.rs); a distribution's `rustc` is often too old. It
+also needs `pkg-config` and GLib's headers:
+
+| Distribution | Packages |
+|---|---|
+| Debian, Ubuntu | `pkg-config libglib2.0-dev` |
+| Fedora | `pkg-config glib2-devel` |
+| Arch | `pkg-config glib2` |
+
+## Quick start
 
 Check that gsctl can see your desktop session:
 
@@ -268,3 +294,11 @@ settings:
 An opt-in, read-only smoke test runs against the installed schemas:
 
     cargo test --test smoke_real -- --ignored
+
+## License
+
+Copyright 2026 Aaron Junod. Licensed under either of the
+[Apache License, Version 2.0](LICENSE-APACHE) or the
+[MIT license](LICENSE-MIT), at your option. Unless you state otherwise, any
+contribution you submit for inclusion in gsctl is dual licensed the same
+way, without any additional terms or conditions.

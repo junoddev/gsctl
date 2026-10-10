@@ -1,0 +1,9 @@
+- name: Generate man page and shell completions
+  run: |
+    sudo apt-get update
+    sudo apt-get install -y --no-install-recommends pkg-config libglib2.0-dev
+    mkdir -p target/dist-extra/man target/dist-extra/completions
+    cargo run --locked --quiet -- man > target/dist-extra/man/gsctl.1
+    cargo run --locked --quiet -- completions bash > target/dist-extra/completions/gsctl.bash
+    cargo run --locked --quiet -- completions zsh > target/dist-extra/completions/_gsctl
+    cargo run --locked --quiet -- completions fish > target/dist-extra/completions/gsctl.fish

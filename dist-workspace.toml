@@ -1,0 +1,32 @@
+[workspace]
+members = ["cargo:."]
+
+# Config for 'dist'
+[dist]
+# The preferred dist version to use in CI (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.32.0"
+# CI backends to support
+ci = "github"
+# The installers to generate for each app
+installers = ["shell"]
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]
+# Path that installers should place binaries in: ~/.local/bin unless the XDG
+# variables say otherwise, so the installer doesn't need a Rust setup
+install-path = ["$XDG_BIN_HOME/", "$XDG_DATA_HOME/../bin", "~/.local/bin"]
+# Where to host releases
+hosting = "github"
+# Whether to install an updater program
+install-updater = false
+# Build each target natively on 22.04 (glibc 2.35, GLib 2.72), so the binaries
+# run on that and anything newer; aarch64 uses GitHub's hosted arm runner
+# instead of cross-compiling against GLib.
+github-custom-runners = { x86_64-unknown-linux-gnu = "ubuntu-22.04", aarch64-unknown-linux-gnu = "ubuntu-22.04-arm", global = "ubuntu-22.04" }
+# Generate the man page and shell completions before the build, and ship them
+# in each archive next to the binary.
+github-build-setup = "../build-setup.yml"
+include = ["target/dist-extra/man", "target/dist-extra/completions"]
+
+[dist.dependencies.apt]
+pkg-config = "*"
+"libglib2.0-dev" = "*"
