@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Stand-ins for search tests (tests/search.rs): inactive schemas, aliases,
+     enum choices, long descriptions and long values. -->
+<schemalist>
+  <enum id="org.gsctl.search.ColorScheme">
+    <value nick="default" value="0"/>
+    <value nick="prefer-dark" value="1"/>
+    <value nick="prefer-light" value="2"/>
+  </enum>
+
+  <schema id="org.gsctl.search.interface" path="/org/gsctl/search/interface/">
+    <key name="color-scheme" enum="org.gsctl.search.ColorScheme">
+      <default>'default'</default>
+      <summary>Color scheme</summary>
+      <description>The preferred color scheme for the user interface. Valid values are “default”, “prefer-dark”, “prefer-light”.</description>
+    </key>
+    <key name="toolbar-style-mode" type="s">
+      <default>'both'</default>
+      <summary>Toolbar mode</summary>
+    </key>
+  </schema>
+
+  <schema id="org.gnome.desktop.session" path="/org/gnome/desktop/session/">
+    <key name="idle-delay" type="u">
+      <default>300</default>
+      <summary>Time before session is considered idle</summary>
+      <description>The number of seconds of inactivity before the session is considered idle. This is a deliberately long description so that search has to trim it: it goes on and on about idleness, presence and the many ways a session can be considered idle.</description>
+    </key>
+  </schema>
+
+  <!-- Ubuntu Touch leftover: a full match for "screen timeout" that doesn't apply. -->
+  <schema id="com.ubuntu.touch.system" path="/com/ubuntu/touch/system/">
+    <key name="activity-timeout" type="u">
+      <default>60</default>
+      <summary>Timeout in seconds for turning off the screen if there is no user activity.</summary>
+    </key>
+  </schema>
+
+  <schema id="org.gsctl.search" path="/org/gsctl/search/">
+    <key name="long-list" type="as">
+      <default>['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff']</default>
+      <summary>Gargantuan list</summary>
+    </key>
+  </schema>
+</schemalist>

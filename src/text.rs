@@ -379,6 +379,15 @@ fn search(out: &Value, lines: &mut Vec<String>) {
     let rows: Vec<Vec<String>> = results
         .iter()
         .map(|r| {
+            if r["kind"] == "extension" {
+                let state = if r["enabled"] == true { "on" } else { "off" };
+                return vec![
+                    format!("  extension {}", s(&r["uuid"])),
+                    String::new(),
+                    state.into(),
+                    format!("# {}", s(&r["name"])),
+                ];
+            }
             let mark = if r["is_default"] == false { "*" } else { " " };
             let shown = if r["relocatable"] == true && r["value"].is_null() {
                 "(relocatable)".to_string()
@@ -386,7 +395,13 @@ fn search(out: &Value, lines: &mut Vec<String>) {
                 value(&r["value"])
             };
             let summary = s(&r["summary"]);
-            let summary = if summary.is_empty() { summary } else { format!("# {summary}") };
+            let mut summary = if summary.is_empty() { summary } else { format!("# {summary}") };
+            if r["inactive"] == true {
+                summary.push_str("  (not used on this desktop)");
+            }
+            if let Some(note) = r["note"].as_str() {
+                summary.push_str(&format!("  ({})", escape(note)));
+            }
             vec![format!("{mark} {}", s(&r["schema"])), s(&r["key"]), shown, summary]
         })
         .collect();

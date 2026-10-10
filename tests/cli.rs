@@ -30,7 +30,8 @@ fn search_ranks_and_reports_values() {
 
     // Key-name matches outrank summary/description matches.
     let out = env.gsctl(&["search", "idle", "delay"]).ok();
-    assert_eq!(out["results"][0]["key"], "size-u");
+    assert_eq!(out["results"][0]["key"], "idle-delay");
+    assert_eq!(out["results"][1]["key"], "size-u");
     let out = env.gsctl(&["search", "lock", "screen"]).ok();
     assert_eq!(out["results"][0]["key"], "lock-enabled");
 }

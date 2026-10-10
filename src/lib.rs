@@ -7,6 +7,7 @@ pub mod error;
 pub mod ext;
 pub mod fsutil;
 pub mod guard;
+pub mod help;
 pub mod index;
 pub mod journal;
 pub mod keys;
