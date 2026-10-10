@@ -149,6 +149,23 @@ fn writes_say_what_they_do() {
 }
 
 #[test]
+fn values_people_type_are_accepted() {
+    let env = TestEnv::new();
+    assert_eq!(env.gsctl(&["set", S, "flag-b", "yes"]).ok()["value"], true);
+    assert_eq!(env.gsctl(&["set", S, "flag-b", "Off"]).ok()["value"], false);
+    assert_eq!(
+        env.gsctl(&["set", S, "list-as", "firefox.desktop"]).ok()["value"],
+        serde_json::json!(["firefox.desktop"])
+    );
+    // A flags key is a string list too, still range-checked.
+    assert_eq!(env.gsctl(&["set", S, "opts", "italic"]).ok()["value"], serde_json::json!(["italic"]));
+    assert_eq!(env.gsctl(&["set", S, "opts", "blink"]).status, 4);
+    let r = text(&env, &["set", S, "flag-b", "maybe"]);
+    assert_eq!(r.status, 4);
+    assert!(r.stderr.starts_with("error: \"maybe\" is not a boolean; use true or false"), "{}", r.stderr);
+}
+
+#[test]
 fn guarded_keys_show_in_text_dry_runs() {
     let env = TestEnv::new();
     let ss = "org.gnome.desktop.screensaver";

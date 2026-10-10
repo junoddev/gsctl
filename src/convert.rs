@@ -195,7 +195,9 @@ fn infer(j: &Value) -> Result<Variant, String> {
 ///
 /// Tried in order: JSON (`true`, `42`, `"text"`, `["a","b"]`), GVariant text
 /// syntax (`@as []`, `('xkb', 'us')`, `uint32 5`), and, for string types, the
-/// raw text itself, so `prefer-dark` works without quotes.
+/// raw text itself, so `prefer-dark` works without quotes. Then, for people
+/// at a shell: `yes`/`no`/`on`/`off` (any case) for booleans, and a bare
+/// word for a string list (`firefox.desktop` → `['firefox.desktop']`).
 pub fn parse_input(raw: &str, ty: &VariantTy) -> Result<Variant, String> {
     let json_err = match serde_json::from_str::<Value>(raw) {
         Ok(j) => match from_json(&j, ty) {
@@ -215,8 +217,69 @@ pub fn parse_input(raw: &str, ty: &VariantTy) -> Result<Variant, String> {
     if ty.as_str() == "ms" {
         return Ok(Variant::from_some(&raw.into()));
     }
-    Err(json_err
-        .unwrap_or_else(|| format!("{raw:?} is not valid JSON or GVariant text for {} ({gvariant_err})", describe(ty))))
+    if json_err.is_none() {
+        if ty == VariantTy::BOOLEAN
+            && let Some(b) = lenient_bool(raw)
+        {
+            return Ok(b.into());
+        }
+        if ty == VariantTy::STRING_ARRAY && !raw.trim().is_empty() && !looks_structured(raw) {
+            return Ok(Variant::array_from_iter_with_type(VariantTy::STRING, [Variant::from(raw)]));
+        }
+    }
+    let example = shell_quote(&example(ty));
+    Err(match json_err {
+        Some(e) => e,
+        None if ty == VariantTy::BOOLEAN => {
+            format!("{raw:?} is not a boolean; use true or false (yes/no and on/off work too)")
+        }
+        // GLib's parser detail only helps when the input was meant as GVariant text.
+        None if looks_structured(raw) => {
+            format!("{raw:?} is not valid JSON or GVariant text for {} ({gvariant_err}); e.g. {example}", describe(ty))
+        }
+        None => format!("{raw:?} is not a valid {}; e.g. {example}", describe(ty)),
+    })
+}
+
+fn lenient_bool(raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "true" | "yes" | "on" => Some(true),
+        "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// Input that looks like an attempt at JSON or GVariant text, rather than a
+/// bare word.
+fn looks_structured(raw: &str) -> bool {
+    raw.trim_start().starts_with(['[', '(', '{', '@', '\'', '"'])
+}
+
+/// A JSON example value of type `ty`, for error messages.
+fn example(ty: &VariantTy) -> String {
+    match ty.as_str() {
+        "b" => "true".into(),
+        "y" | "n" | "q" | "i" | "u" | "x" | "t" | "h" | "v" => "42".into(),
+        "d" => "1.5".into(),
+        "s" => "\"text\"".into(),
+        "o" => "\"/org/example/Object\"".into(),
+        "g" => "\"as\"".into(),
+        "as" => "[\"a\", \"b\"]".into(),
+        _ if ty.is_maybe() => example(ty.element()),
+        _ if ty.is_array() && ty.element().is_dict_entry() => format!("{{\"key\": {}}}", example(ty.element().value())),
+        _ if ty.is_array() => format!("[{}]", example(ty.element())),
+        _ if ty.is_tuple() => format!("[{}]", ty.tuple_types().map(example).collect::<Vec<_>>().join(", ")),
+        _ => "null".into(),
+    }
+}
+
+/// `text` quoted for a POSIX shell, if it needs quoting.
+fn shell_quote(text: &str) -> String {
+    if text.chars().all(|c| c.is_ascii_alphanumeric() || "-_.,/:+".contains(c)) {
+        text.to_string()
+    } else {
+        format!("'{}'", text.replace('\'', r"'\''"))
+    }
 }
 
 /// A short English description of a GVariant type, for error messages.
@@ -404,6 +467,37 @@ mod tests {
         assert_eq!(p("label", "ms").unwrap(), "@ms 'label'");
         assert!(p("maybe", "b").is_err());
         assert_eq!(p(r#"["a",1]"#, "as").unwrap_err(), "item 1: expected string, got integer");
+    }
+
+    #[test]
+    fn parse_input_is_lenient_for_people() {
+        let p = |raw: &str, sig: &str| parse_input(raw, &ty(sig)).map(|v| v.print(true).to_string());
+        for (raw, want) in [("yes", "true"), ("No", "false"), ("ON", "true"), ("off", "false"), ("True", "true")] {
+            assert_eq!(p(raw, "b").unwrap(), want, "{raw}");
+        }
+        assert_eq!(
+            p("maybe", "b").unwrap_err(),
+            "\"maybe\" is not a boolean; use true or false (yes/no and on/off work too)"
+        );
+        // A bare word for a string list is a one-item list.
+        assert_eq!(p("firefox.desktop", "as").unwrap(), "['firefox.desktop']");
+        assert_eq!(p("<Super>1", "as").unwrap(), "['<Super>1']");
+        assert_eq!(p("['a']", "as").unwrap(), "['a']");
+        // ...but not something that was meant as a list, or another type.
+        assert!(p("[a", "as").unwrap_err().contains("e.g. '[\"a\", \"b\"]'"));
+        assert!(p("42", "as").is_err());
+        assert!(p("", "as").is_err());
+        assert!(p("word", "a(ss)").is_err());
+        // Plain-word errors leave out GLib's parser detail and give an example.
+        assert_eq!(p("big", "i").unwrap_err(), "\"big\" is not a valid 32-bit integer; e.g. 42");
+        assert_eq!(
+            p("x", "(ii)").unwrap_err(),
+            "\"x\" is not a valid tuple [32-bit integer, 32-bit integer]; e.g. '[42, 42]'"
+        );
+        assert_eq!(
+            p("x", "a{sv}").unwrap_err(),
+            "\"x\" is not a valid object mapping string to variant (any value); e.g. '{\"key\": 42}'"
+        );
     }
 
     #[test]
