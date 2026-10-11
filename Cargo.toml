@@ -1,6 +1,6 @@
 [package]
 name = "gsctl"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.92"
 description = "Search, inspect and change GNOME settings (GSettings/dconf) with JSON output, validation and undo, built for AI agents"
