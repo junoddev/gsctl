@@ -247,4 +247,5 @@ Fedora and Arch.
 | Date | gsctl | Environment | Result |
 |---|---|---|---|
 | 2026-10-11 | 0.1.1 | Fedora 44 live VM, GNOME 50 | 91 passed, 4 failed, 1 skipped. Bugs: a no-op `set` took the next `revert last` (JRN-04); `gsctl … \| head` panicked on the closed pipe (OUT-03). The other failures and the skip were mistakes in the cases, since fixed |
-| 2026-10-11 | f4c3385 + both fixes | Fedora 44 live VM, GNOME 50 | 96 passed, 20 keys restored |
+| 2026-10-11 | 0.1.2 | Fedora 44 live VM, GNOME 50 | 96 passed, 20 keys restored |
+| | 0.1.2 | Ubuntu 26.04, GNOME 50 | Not run yet: needs a VM or a spare login (the suite changes real settings) |

@@ -1,5 +1,8 @@
 # gsctl
 
+[![CI](https://github.com/junoddev/gsctl/actions/workflows/ci.yml/badge.svg)](https://github.com/junoddev/gsctl/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/gsctl.svg)](https://crates.io/crates/gsctl)
+
 A command-line interface to GNOME's settings (GSettings/dconf) built for AI
 agents, and usable by people. You can search for the key that controls
 something, see its type and allowed values, change it with validation and
@@ -289,11 +292,17 @@ commit. Link or copy it into your agent's skills directory, e.g.
 
 ## Development
 
-Tested on Ubuntu with GNOME 50. Tests run under `dbus-run-session` with
-throwaway schemas and a temporary dconf database; they never touch your real
-settings:
+Developed on Ubuntu 26.04, and tested on a live Fedora 44 session as well
+(both GNOME 50). The cargo tests run under `dbus-run-session` with throwaway
+schemas and a temporary dconf database, so they never touch your real
+settings; CI runs them on Ubuntu 22.04 and 24.04, Fedora and Arch:
 
     cargo test
+
+[`tests/live/`](tests/live/PLAN.md) is the release regression suite: 96
+cases run in a real GNOME session (a test VM), covering what the hermetic
+tests can't see, from the distribution's schemas to extensions and dconf
+locks. Its results for each release are logged in the plan.
 
 An opt-in, read-only smoke test runs against the installed schemas:
 
