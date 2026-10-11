@@ -10,6 +10,8 @@ change to them is listed here under that release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-11
+
 ### Fixed
 
 - `ext list` and `doctor` treat a plain GNOME session (`XDG_CURRENT_DESKTOP=GNOME`,
@@ -93,5 +95,6 @@ First public release.
 - SECURITY.md: the trust model, a recommended Claude Code permission setup,
   scope, and how to report a vulnerability privately.
 
-[Unreleased]: https://github.com/junoddev/gsctl/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/junoddev/gsctl/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/junoddev/gsctl/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/junoddev/gsctl/releases/tag/v0.1.0
