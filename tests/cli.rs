@@ -684,3 +684,33 @@ fn doctor_without_a_bus() {
     assert_eq!(out["ok"], false);
     assert_eq!(check(&out, "session_bus")["status"], "error");
 }
+
+#[test]
+fn a_reader_that_goes_away_is_not_a_crash() {
+    let env = TestEnv::new();
+    // Close the read end before gsctl writes, as `gsctl ... | head -c1` does.
+    let mut child = env
+        .command(env!("CARGO_BIN_EXE_gsctl"))
+        .args(["search", "a", "--limit", "500"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let out = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert!(out.status.success(), "{stderr}");
+}
+
+#[test]
+fn a_set_that_changes_nothing_is_not_journaled() {
+    let env = TestEnv::new();
+    env.gsctl(&["set", S, "count-i", "5"]).ok();
+    let again = env.gsctl(&["set", S, "count-i", "5"]).ok();
+    assert_eq!(again["changed"], false);
+    assert!(again["journal_id"].is_null(), "{again}");
+    // So `revert last` still undoes the real change.
+    env.gsctl(&["revert", "last"]).ok();
+    assert_eq!(env.gsctl(&["get", S, "count-i"]).ok()["is_default"], true);
+}

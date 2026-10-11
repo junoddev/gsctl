@@ -630,11 +630,22 @@ fn fail(err: &Error, text: bool) -> ExitCode {
     ExitCode::from(err.exit_code() as u8)
 }
 
+/// Write `text` to stdout. A reader that went away (`gsctl ... | head`) is
+/// not an error; `println!` would panic there.
+fn emit(text: &str) -> ExitCode {
+    let mut out = std::io::stdout().lock();
+    match out.write_all(text.as_bytes()).and_then(|_| out.flush()) {
+        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
+            fail(&Error::Internal(format!("writing output: {e}")), false)
+        }
+        _ => ExitCode::SUCCESS,
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args == ["help", "--json"] {
-        println!("{}", commands_json());
-        return ExitCode::SUCCESS;
+        return emit(&format!("{}\n", commands_json()));
     }
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -662,14 +673,11 @@ fn main() -> ExitCode {
     let text = format == Format::Text;
     match run(&cli, text) {
         Ok(None) => ExitCode::SUCCESS,
-        Ok(Some(out)) => {
-            match format {
-                Format::Json if pretty(&cli) => println!("{}", serde_json::to_string_pretty(&out).unwrap()),
-                Format::Json => println!("{out}"),
-                Format::Text => print!("{}", gsctl::text::render(command_name(&cli.command), &out)),
-            }
-            ExitCode::SUCCESS
-        }
+        Ok(Some(out)) => emit(&match format {
+            Format::Json if pretty(&cli) => format!("{}\n", serde_json::to_string_pretty(&out).unwrap()),
+            Format::Json => format!("{out}\n"),
+            Format::Text => gsctl::text::render(command_name(&cli.command), &out),
+        }),
         Err(e) => fail(&commands::with_suggestions(e), text_errors(format, explicit)),
     }
 }

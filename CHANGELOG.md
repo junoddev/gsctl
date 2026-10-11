@@ -10,6 +10,18 @@ change to them is listed here under that release.
 
 ## [Unreleased]
 
+### Fixed
+
+- Piping output into a reader that stops early (`gsctl search … | head`)
+  no longer panics with "failed printing to stdout: Broken pipe".
+- A `set` or `reset` that changes nothing isn't journaled any more, so it no
+  longer takes the next `revert last` from the real change before it.
+
+### Added
+
+- `tests/live/`: a live regression plan and suite (96 cases) for a real GNOME
+  session, run before each release.
+
 ## [0.1.1] - 2026-10-11
 
 ### Fixed

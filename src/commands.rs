@@ -486,6 +486,11 @@ pub(crate) fn write(entry: &Entry, key: &str, opts: &WriteOpts, op: &str, action
         )));
     }
     out["value"] = guard::shown(key, &now);
+    // A set or reset that changed nothing in dconf isn't journaled, so it
+    // can't take the next `revert last` from the change before it.
+    if matches!(op, "set" | "reset") && now == old && settings.user_value(key) == old_user {
+        return Ok(out);
+    }
     let change = journal::Change {
         op,
         schema: &schema,
