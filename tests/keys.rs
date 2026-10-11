@@ -361,3 +361,18 @@ fn add_rolls_back_when_a_write_fails() {
     }
     assert_eq!(env.gsctl(&["get", MEDIA_KEYS, "custom-keybindings"]).ok()["is_default"], true);
 }
+
+#[test]
+fn undoing_keys_add_needs_no_yes_but_redoing_it_does() {
+    let env = TestEnv::new();
+    let media = "org.gnome.settings-daemon.plugins.media-keys";
+    env.gsctl(&["keys", "add", "Term", "<Super><Alt>F12", "touch x", "--yes"]).ok();
+    // Undoing it only removes a command: no --yes.
+    let undo = env.gsctl(&["revert", "last"]).ok();
+    assert_eq!(env.gsctl(&["get", media, "custom-keybindings"]).ok()["is_default"], true);
+    // Reverting the undo runs the command again: --yes.
+    let undo_batch = undo["batch"].as_str().expect("revert of a batch has a batch id").to_string();
+    assert_eq!(env.gsctl(&["revert", &undo_batch]).status, 6);
+    env.gsctl(&["revert", &undo_batch, "--yes"]).ok();
+    assert_eq!(env.gsctl(&["get", media, "custom-keybindings"]).ok()["value"].as_array().unwrap().len(), 1);
+}

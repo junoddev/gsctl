@@ -87,6 +87,9 @@ Revert by the `journal_id` (or `batch`) that your write returned. The
 journal is shared with the user and other agents, so `revert last` may undo
 someone else's change. A revert refuses (exit 7) if the key has changed
 since; check `gsctl get` and only `--force` if overwriting is intended.
+A revert that would change a guarded key in a risky direction needs `--yes`
+like any write (re-enabling an extension, restoring a removed shortcut);
+undoing `keys add` or clearing a command doesn't.
 `gsctl reset <schema> <key>` goes back to the default. If a batch write
 fails partway, gsctl rolls back what it wrote (`rolled_back` in the error).
 Secrets (proxy passwords) aren't journaled or exported, so their changes

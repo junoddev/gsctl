@@ -24,6 +24,11 @@ change to them is listed here under that release.
   own, so dotfiles linked into place by GNU Stow work again. Symlinks to
   other users' files, FIFOs and oversized files are still refused.
 
+- `revert` of a `keys add` (and any write that only removes commands, such
+  as clearing a shortcut's `command`) no longer needs `--yes`, as the README
+  always showed. Reverts that add or restore a command, re-enable an
+  extension, or touch the other guarded keys still need it.
+
 ### Added
 
 - `doctor` warns when GNOME's desktop schemas (`gsettings-desktop-schemas`)

@@ -25,19 +25,21 @@ struct Rule {
     executes: bool,
     /// Only values below this need `--yes` (for integer keys).
     below: Option<u32>,
+    /// Writes that run less (see [`runs_less`]) don't need `--yes`.
+    runs_less_ok: bool,
 }
 
 const fn rule(schema: &'static str, key: Option<&'static str>, reason: &'static str) -> Rule {
-    Rule { schema, key, reason, executes: false, below: None }
+    Rule { schema, key, reason, executes: false, below: None, runs_less_ok: false }
 }
 
 const fn runs(schema: &'static str, key: Option<&'static str>, reason: &'static str) -> Rule {
-    Rule { schema, key, reason, executes: true, below: None }
+    Rule { schema, key, reason, executes: true, below: None, runs_less_ok: true }
 }
 
 /// Guarded only when the new value is below `min`.
 const fn floor(schema: &'static str, key: &'static str, min: u32, reason: &'static str) -> Rule {
-    Rule { schema, key: Some(key), reason, executes: false, below: Some(min) }
+    Rule { schema, key: Some(key), reason, executes: false, below: Some(min), runs_less_ok: false }
 }
 
 /// First match wins.
@@ -83,11 +85,15 @@ const RULES: &[Rule] = &[
         Some("disable-extension-version-validation"),
         "lets extensions written for other GNOME versions run inside GNOME Shell",
     ),
-    runs(
-        "org.gnome.shell",
-        Some("enabled-extensions"),
-        "replaces the whole list of enabled extensions, which run code inside GNOME Shell",
-    ),
+    // Emptying the list wholesale still needs --yes; `ext disable` edits one uuid.
+    Rule {
+        schema: "org.gnome.shell",
+        key: Some("enabled-extensions"),
+        reason: "replaces the whole list of enabled extensions, which run code inside GNOME Shell",
+        executes: true,
+        below: None,
+        runs_less_ok: false,
+    },
     // Values that can cut off remote access or input, or weaken the lock.
     rule("org.gnome.desktop.remote-desktop.", None, "can cut off remote desktop access"),
     rule("org.gnome.desktop.input-sources", None, "can leave the keyboard typing the wrong layout"),
@@ -159,6 +165,8 @@ pub struct Guard {
     pub executes: bool,
     /// Only new values below this need `--yes`.
     pub below: Option<u32>,
+    /// A write that runs less than the current value needs no `--yes`.
+    pub runs_less_ok: bool,
 }
 
 impl Guard {
@@ -195,7 +203,12 @@ fn extension_command(schema: &str, path: Option<&str>, key: &str, ty: &str, from
         from_extension || in_namespace(schema) || path.is_some_and(|p| in_namespace(&schema_id_for_path(p)));
     let named = key.contains("command") || key.starts_with("exec");
     let text = matches!(ty, "s" | "ms" | "as");
-    (extension && named && text).then_some(Guard { reason: EXTENSION_COMMAND, executes: true, below: None })
+    (extension && named && text).then_some(Guard {
+        reason: EXTENSION_COMMAND,
+        executes: true,
+        below: None,
+        runs_less_ok: true,
+    })
 }
 
 fn find(schema: &str, key: &str) -> Option<Guard> {
@@ -215,7 +228,7 @@ fn find(schema: &str, key: &str) -> Option<Guard> {
             };
             schema_matches && key_matches
         })
-        .map(|r| Guard { reason: r.reason, executes: r.executes, below: r.below })
+        .map(|r| Guard { reason: r.reason, executes: r.executes, below: r.below, runs_less_ok: r.runs_less_ok })
 }
 
 /// Why `schema key` is guarded, or `None` if it isn't. Ignores the instance
@@ -250,9 +263,31 @@ pub fn check_entry(entry: &crate::index::Entry, path: Option<&str>, key: &str) -
 }
 
 /// The guard on writing `new` to `key`: [`check_entry`], unless `new`
-/// clears the guard's floor.
+/// clears the guard's floor, or the guard allows it and `new` runs nothing
+/// the current value doesn't (see [`runs_less`]).
 pub fn check_write(entry: &crate::index::Entry, path: Option<&str>, key: &str, new: &glib::Variant) -> Option<Guard> {
-    check_entry(entry, path, key).filter(|g| g.applies_to(new))
+    let guard = check_entry(entry, path, key).filter(|g| g.applies_to(new))?;
+    if guard.runs_less_ok
+        && let Ok(settings) = entry.settings(path)
+        && runs_less(&gio::prelude::SettingsExt::value(&settings, key), new)
+    {
+        return None;
+    }
+    Some(guard)
+}
+
+/// Whether `new` runs nothing that `old` doesn't: an empty string, or a list
+/// whose entries are all in `old`. So removing a shortcut's command, or
+/// undoing `keys add`, needs no `--yes`. Booleans never count: which value is
+/// the safe one depends on the key.
+fn runs_less(old: &glib::Variant, new: &glib::Variant) -> bool {
+    if let Some(s) = new.str() {
+        return s.is_empty() || old.str() == Some(s);
+    }
+    match (old.get::<Vec<String>>(), new.get::<Vec<String>>()) {
+        (Some(old), Some(new)) => new.iter().all(|n| old.contains(n)),
+        _ => false,
+    }
 }
 
 /// Whether a key of type `ty` (a GVariant type string) holds a secret, like
@@ -419,6 +454,18 @@ mod tests {
         // Listed rules win over the heuristic.
         let g = check_typed("org.gnome.desktop.default-applications.terminal", None, "exec", "s", false).unwrap();
         assert_eq!(g.reason, "chooses the program run as the terminal");
+    }
+
+    #[test]
+    fn runs_less_only_when_nothing_new_runs() {
+        use glib::prelude::*;
+        let list = |v: &[&str]| v.to_variant();
+        assert!(super::runs_less(&list(&["/a/", "/b/"]), &list(&["/a/"])));
+        assert!(super::runs_less(&list(&["/a/"]), &list(&[])));
+        assert!(!super::runs_less(&list(&["/a/"]), &list(&["/a/", "/b/"])));
+        assert!(super::runs_less(&"ptyxis".to_variant(), &"".to_variant()));
+        assert!(!super::runs_less(&"".to_variant(), &"ptyxis".to_variant()));
+        assert!(!super::runs_less(&true.to_variant(), &false.to_variant()));
     }
 
     #[test]
