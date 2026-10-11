@@ -10,6 +10,8 @@ change to them is listed here under that release.
 
 ## [Unreleased]
 
+<!-- launch bot PR rehearsal; not for merging -->
+
 ## [0.1.2] - 2026-10-11
 
 ### Fixed
