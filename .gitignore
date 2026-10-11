@@ -3,3 +3,4 @@
 /HANDOFF*.md
 /REVIEW-*.md
 /NOTES.md
+__pycache__/
